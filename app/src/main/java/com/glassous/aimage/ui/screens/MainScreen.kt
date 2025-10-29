@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 package com.glassous.aimage.ui.screens
 
 import androidx.compose.foundation.layout.*
@@ -36,6 +37,9 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.LoadingIndicatorDefaults
 import com.glassous.aimage.R
 import com.glassous.aimage.data.ModelConfigStorage
 import kotlinx.coroutines.launch
@@ -65,7 +69,7 @@ enum class AspectRatio(val displayName: String, val ratio: Float) {
     PORTRAIT_9_16("9:16", 9f/16f)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun MainScreen(
     onMenuClick: () -> Unit,
@@ -573,10 +577,10 @@ fun MainScreen(
                         ) {
                         val currentWindow = getCurrentWindow()
                         if (currentWindow?.isLoading == true) {
-                            CircularProgressIndicator(
+                            LoadingIndicator(
                                 modifier = Modifier.size(24.dp),
                                 color = MaterialTheme.colorScheme.onPrimary,
-                                strokeWidth = 2.dp
+                                polygons = LoadingIndicatorDefaults.IndeterminateIndicatorPolygons
                             )
                         } else {
                             Icon(
@@ -1061,7 +1065,10 @@ fun ChatWindowContent(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            CircularProgressIndicator()
+                            LoadingIndicator(
+                                color = MaterialTheme.colorScheme.primary,
+                                polygons = LoadingIndicatorDefaults.IndeterminateIndicatorPolygons
+                            )
                             Text(
                                 text = "正在生成图片...",
                                 style = MaterialTheme.typography.bodyMedium,
