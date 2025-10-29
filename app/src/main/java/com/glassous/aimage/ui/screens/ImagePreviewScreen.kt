@@ -8,14 +8,23 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -38,6 +47,15 @@ fun ImagePreviewScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // 旋转与缩放状态
+    var rotation by remember { mutableStateOf(0f) }
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        scale = (scale * zoomChange).coerceIn(1f, 6f)
+        offset = offset + panChange
+    }
 
     fun saveImageToAlbum(context: Context, url: String) {
         scope.launch {
@@ -98,6 +116,12 @@ fun ImagePreviewScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { rotation = (rotation + 90f) % 360f }) {
+                        Icon(
+                            imageVector = Icons.Filled.RotateRight,
+                            contentDescription = "旋转图片"
+                        )
+                    }
                     IconButton(onClick = { saveImageToAlbum(context, imageUrl) }) {
                         Icon(
                             imageVector = Icons.Default.Save,
@@ -122,7 +146,17 @@ fun ImagePreviewScreen(
             AsyncImage(
                 model = imageUrl,
                 contentDescription = "预览图片",
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                        rotationZ = rotation
+                        clip = true
+                    }
+                    .transformable(transformState),
                 contentScale = ContentScale.Fit
             )
         }

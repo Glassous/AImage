@@ -23,7 +23,7 @@ fun AImageApp(
     val historyItems = remember { mutableStateListOf<HistoryItem>() }
     val activeHistoryIds = remember { mutableStateListOf<String>() }
     var historyItemToLoad by remember { mutableStateOf<HistoryItem?>(null) }
-    var imagePreviewUrl by remember { mutableStateOf<String?>(null) }
+    // 独立图片预览改为 Activity 承载，不再使用内部状态切换
 
     LaunchedEffect(Unit) {
         val loaded = ChatHistoryStorage.loadAll(context)
@@ -38,10 +38,7 @@ fun AImageApp(
         }
     }
 
-    // 在图片预览页按返回键时关闭预览页
-    BackHandler(enabled = imagePreviewUrl != null) {
-        imagePreviewUrl = null
-    }
+    // 图片预览已独立为 Activity，无需处理其返回键
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -80,8 +77,7 @@ fun AImageApp(
         },
         modifier = modifier
     ) {
-        if (imagePreviewUrl == null) {
-            MainScreen(
+        MainScreen(
                 onMenuClick = {
                     scope.launch {
                         if (drawerState.isClosed) {
@@ -97,17 +93,13 @@ fun AImageApp(
                     ChatHistoryStorage.saveAll(context, historyItems.toList())
                 },
                 onImageClick = { url ->
-                    imagePreviewUrl = url
+                    // 跳转至独立的图片预览 Activity
+                    val intent = android.content.Intent(context, com.glassous.aimage.ImagePreviewActivity::class.java)
+                    intent.putExtra("imageUrl", url)
+                    context.startActivity(intent)
                 },
                 historyItemToLoad = historyItemToLoad,
                 modifier = Modifier.fillMaxSize()
             )
-        } else {
-            ImagePreviewScreen(
-                imageUrl = imagePreviewUrl!!,
-                onBackClick = { imagePreviewUrl = null },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
     }
 }

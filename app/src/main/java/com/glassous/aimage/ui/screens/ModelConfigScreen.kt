@@ -49,6 +49,24 @@ class ModelGroupConfig(
     val models: MutableList<UserModel> = initialModels
 }
 
+private fun defaultPresetsFor(group: ModelGroupType): List<UserModel> = when (group) {
+    ModelGroupType.Google -> listOf(
+        UserModel(name = "gemini-2.5-flash-image", displayName = "Nano Banana🍌", note = ""),
+        UserModel(name = "imagen-4.0-generate-001", displayName = "imagen-4.0-generate-001", note = ""),
+        UserModel(name = "imagen-4.0-fast-generate-001", displayName = "imagen-4.0-fast-generate-001", note = "")
+    )
+    ModelGroupType.Doubao -> listOf(
+        UserModel(name = "doubao-seedream-4-0-250828", displayName = "doubao-seedream-4-0-250828", note = ""),
+        UserModel(name = "doubao-seedream-3-0-t2i-250415", displayName = "doubao-seedream-3-0-t2i-250415", note = "")
+    )
+    ModelGroupType.Qwen -> listOf(
+        UserModel(name = "qwen-image-plus", displayName = "qwen-image-plus", note = ""),
+        UserModel(name = "qwen-image", displayName = "qwen-image", note = ""),
+        UserModel(name = "wan2.5-t2i-preview", displayName = "wan2.5-t2i-preview", note = ""),
+        UserModel(name = "wan2.2-t2i-plus", displayName = "wan2.2-t2i-plus", note = "")
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelConfigScreen(
@@ -102,6 +120,20 @@ fun ModelConfigScreen(
             val savedModels = ModelConfigStorage.loadModels(context, group)
             cfg.models.clear()
             cfg.models.addAll(savedModels)
+
+            // 加入初始模型预设：若不存在则追加，允许用户删除
+            val presets = defaultPresetsFor(group)
+            var changed = false
+            presets.forEach { preset ->
+                val exists = cfg.models.any { it.name == preset.name }
+                if (!exists) {
+                    cfg.models.add(preset)
+                    changed = true
+                }
+            }
+            if (changed) {
+                ModelConfigStorage.saveModels(context, group, cfg.models)
+            }
         }
     }
 

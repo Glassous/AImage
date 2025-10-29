@@ -39,6 +39,8 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import androidx.compose.animation.*
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 
 // 聊天窗口数据结构
 data class ChatWindow(
@@ -317,8 +319,16 @@ fun MainScreen(
                         },
                         placeholder = { Text("描述您想要生成的图片...") },
                         modifier = Modifier
-                            .weight(1f),
+                            .weight(1f)
+                            .animateContentSize(
+                                animationSpec = tween(
+                                    durationMillis = 220,
+                                    easing = FastOutSlowInEasing
+                                )
+                            ),
                         enabled = getCurrentWindow()?.isLoading?.not() ?: true,
+                        maxLines = 6,
+                        minLines = 1,
                         shape = RoundedCornerShape(24.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -354,7 +364,7 @@ fun MainScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    // 上一窗口
+                                    // 上一窗口（向上）
                                     Box(
                                         modifier = Modifier
                                             .size(24.dp)
@@ -373,7 +383,7 @@ fun MainScreen(
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
-                                    // 下一窗口
+                                    // 下一窗口（向下）
                                     Box(
                                         modifier = Modifier
                                             .size(24.dp)
@@ -399,8 +409,14 @@ fun MainScreen(
                     val showSendButton = getCurrentWindow()?.inputText?.isNotBlank() == true
                     AnimatedVisibility(
                         visible = showSendButton,
-                        enter = fadeIn() + scaleIn(initialScale = 0.9f) + slideInHorizontally(initialOffsetX = { it / 4 }),
-                        exit = fadeOut() + scaleOut(targetScale = 0.9f) + slideOutHorizontally(targetOffsetX = { it / 4 })
+                        enter =
+                            fadeIn(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)) +
+                            scaleIn(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing), initialScale = 0.9f) +
+                            slideInHorizontally(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing), initialOffsetX = { it / 4 }),
+                        exit =
+                            fadeOut(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)) +
+                            scaleOut(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing), targetScale = 0.9f) +
+                            slideOutHorizontally(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing), targetOffsetX = { it / 4 })
                     ) {
                         FloatingActionButton(
                         onClick = {
@@ -964,14 +980,7 @@ fun ChatWindowContent(
                             )
                         }
                         
-                        if (window.responseText.isNotBlank()) {
-                            Text(
-                                text = window.responseText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                        }
+                        // 按需求移除图片框中的“生成说明”文本
                     }
                 }
             }

@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import com.glassous.aimage.ModelConfigActivity
 import com.glassous.aimage.R
 import com.glassous.aimage.data.ModelConfigStorage
+import com.glassous.aimage.data.ThemeMode
+import com.glassous.aimage.data.ThemeStorage
 
 data class SettingsItem(
     val title: String,
@@ -88,6 +90,10 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // 主题设置：跟随系统 / 浅色 / 深色
+            item {
+                ThemeSettingCard()
+            }
             item {
                 SettingsItemCard(
                     item = SettingsItem(
@@ -189,6 +195,82 @@ private fun ModelGroupType.logoRes(): Int = when (this) {
     ModelGroupType.Google -> R.drawable.gemini
     ModelGroupType.Doubao -> R.drawable.doubao
     ModelGroupType.Qwen -> R.drawable.qwen
+}
+
+@Composable
+private fun ThemeSettingCard(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    ThemeStorage.ensureInitialized(context)
+    val currentMode by ThemeStorage.themeModeFlow.collectAsState(initial = ThemeStorage.loadThemeMode(context))
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "主题设置",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ThemeOption(
+                    label = "跟随系统",
+                    selected = currentMode == ThemeMode.System,
+                    onClick = { ThemeStorage.saveThemeMode(context, ThemeMode.System) }
+                )
+                ThemeOption(
+                    label = "浅色",
+                    selected = currentMode == ThemeMode.Light,
+                    onClick = { ThemeStorage.saveThemeMode(context, ThemeMode.Light) }
+                )
+                ThemeOption(
+                    label = "深色",
+                    selected = currentMode == ThemeMode.Dark,
+                    onClick = { ThemeStorage.saveThemeMode(context, ThemeMode.Dark) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val selectedContainer = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.9f)
+    val unselectedContainer = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) selectedContainer else unselectedContainer
+    ) {
+        TextButton(onClick = onClick) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
