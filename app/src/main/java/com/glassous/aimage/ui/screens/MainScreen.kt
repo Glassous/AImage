@@ -72,6 +72,7 @@ fun MainScreen(
     onAddHistory: (HistoryItem) -> Unit,
     onImageClick: (String) -> Unit,
     historyItemToLoad: HistoryItem? = null,
+    newConversationToken: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     // 多窗口状态管理
@@ -232,6 +233,24 @@ fun MainScreen(
                 responseText = ""
                 imageUrl = item.imageUrl
             }
+        }
+    }
+
+    // 处理“新建对话”触发：清空主页面内容
+    LaunchedEffect(newConversationToken) {
+        if (newConversationToken != 0L) {
+            // 清空所有聊天窗口，展示空状态页
+            chatWindows = emptyList()
+            // 重置兼容性状态，避免残留内容
+            inputText = ""
+            responseText = ""
+            imageUrl = null
+            isLoading = false
+            showModelRequiredDialog = false
+            // 其他 UI 辅助状态复位
+            selectedAspectRatio = AspectRatio.SQUARE
+            showAspectRatioMenu = false
+            showSheet = false
         }
     }
 

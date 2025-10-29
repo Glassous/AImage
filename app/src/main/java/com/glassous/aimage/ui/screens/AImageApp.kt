@@ -23,6 +23,7 @@ fun AImageApp(
     val historyItems = remember { mutableStateListOf<HistoryItem>() }
     val activeHistoryIds = remember { mutableStateListOf<String>() }
     var historyItemToLoad by remember { mutableStateOf<HistoryItem?>(null) }
+    var newConversationToken by remember { mutableStateOf(0L) }
     // 独立图片预览改为 Activity 承载，不再使用内部状态切换
 
     LaunchedEffect(Unit) {
@@ -51,6 +52,8 @@ fun AImageApp(
                     historyItemToLoad = null
                     // 清空侧边栏高亮，避免残留背景色
                     activeHistoryIds.clear()
+                    // 触发主页面清空
+                    newConversationToken++
                 },
                 onSettings = {
                     // 进入设置页时不关闭侧边栏，确保动画连贯
@@ -99,6 +102,7 @@ fun AImageApp(
                     context.startActivity(intent)
                 },
                 historyItemToLoad = historyItemToLoad,
+                newConversationToken = newConversationToken,
                 modifier = Modifier.fillMaxSize()
             )
     }
