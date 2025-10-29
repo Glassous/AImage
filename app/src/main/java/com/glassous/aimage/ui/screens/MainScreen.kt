@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -31,13 +32,17 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import coil.compose.AsyncImage
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LoadingIndicatorDefaults
 import com.glassous.aimage.R
@@ -98,6 +103,8 @@ fun MainScreen(
     var showAspectRatioMenu by remember { mutableStateOf(false) }
     
     var showSheet by remember { mutableStateOf(false) }
+    // 右侧快捷栏显隐（提升到页面级，供顶部栏按钮调用）
+    var showRightQuickBar by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     val groupModels = remember { mutableStateMapOf<ModelGroupType, List<UserModel>>() }
@@ -277,43 +284,18 @@ fun MainScreen(
                     }
                 },
                 actions = {
-                    Row(
-                        modifier = Modifier
-                            .wrapContentSize()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        chatWindows.forEachIndexed { index, w ->
-                            val logo = w.modelRef?.group?.logoRes()
-                            Box(
-                                modifier = Modifier
-                                    .size(28.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable { scope.launch { pagerState.animateScrollToPage(index) } },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (logo != null) {
-                                    Image(
-                                        painter = painterResource(id = logo),
-                                        contentDescription = "跳转窗口${index + 1}",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.Menu,
-                                        contentDescription = "未设置模型",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    // 顶部栏不再显示快捷窗口图标，改为右侧快捷栏
                     IconButton(onClick = { showNewChatDialog = true }) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "新建聊天窗口"
+                        )
+                    }
+                    // 呼出/关闭右侧快捷栏按钮（靠右，位于 + 号右侧）
+                    IconButton(onClick = { showRightQuickBar = !showRightQuickBar }) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "切换快捷窗口栏"
                         )
                     }
                 },
@@ -629,6 +611,8 @@ fun MainScreen(
                 val window = chatWindows[pageIndex]
                 // 在可组合作用域中获取密度并转换阈值，避免在pointerInput中访问LocalDensity.current
                 val thresholdPx = with(LocalDensity.current) { 32.dp.toPx() }
+                val horizontalThresholdPx = with(LocalDensity.current) { 28.dp.toPx() }
+                val rightEdgePx = with(LocalDensity.current) { 72.dp.toPx() }
                 Box(modifier = Modifier.fillMaxSize()) {
                     ChatWindowContent(
                         window = window,
@@ -642,7 +626,7 @@ fun MainScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxHeight()
-                            .width(36.dp)
+                            .width(64.dp)
                             .align(Alignment.CenterEnd)
                             .pointerInput(pagerState.currentPage, chatWindows.size, thresholdPx) {
                                 var dyAcc = 0f
@@ -667,6 +651,93 @@ fun MainScreen(
                                 )
                             }
                     )
+
+                    // 快捷切换栏（无背景遮罩）
+                    AnimatedVisibility(
+                        visible = showRightQuickBar,
+                        enter = fadeIn() + slideInHorizontally(initialOffsetX = { it / 2 }),
+                        exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it / 2 })
+                    ) {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            // 点击非侧边栏区域关闭
+                            Spacer(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clickable { showRightQuickBar = false }
+                            )
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .width(72.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
+                                tonalElevation = 2.dp
+                            ) {
+                                // 图标列表
+                                val scrollState = rememberScrollState()
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(scrollState)
+                                        .padding(vertical = 12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    chatWindows.forEachIndexed { idx, w ->
+                                        val logo = w.modelRef?.group?.logoRes()
+                                        val selected = idx == pagerState.currentPage
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(
+                                                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                    else Color.Transparent
+                                                )
+                                                .clickable {
+                                                    scope.launch { pagerState.animateScrollToPage(idx) }
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (logo != null) {
+                                                Image(
+                                                    painter = painterResource(id = logo),
+                                                    contentDescription = "跳转窗口${idx + 1}",
+                                                    modifier = Modifier.size(28.dp)
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Default.Menu,
+                                                    contentDescription = "未设置模型",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // 新建窗口按钮（点击呼出，再次点击顶部按钮可关闭）
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                            .clickable { showNewChatDialog = true },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "新建聊天窗口",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 已移除左滑呼出：仅保留顶部按钮打开，以及点击非侧栏区域关闭
                 }
             }
         }
