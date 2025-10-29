@@ -73,7 +73,13 @@ object ApiService {
                     generateImageMock(provider, modelName, prompt)
                 }
             }
-            else -> generateImageMock(provider, modelName, prompt)
+            ModelGroupType.Qwen -> {
+                if (context != null) {
+                    generateImageWithQwen(context, modelName, prompt, aspectRatio)
+                } else {
+                    generateImageMock(provider, modelName, prompt)
+                }
+            }
         }
     }
 
@@ -365,6 +371,304 @@ object ApiService {
             "4:3" -> "1024x768"
             "9:16" -> "1024x1792"
             else -> "1024x1024"
+        }
+    }
+
+    // -------- Qwen (DashScope) 文生图：异步任务 + 轮询 + 本地落盘 --------
+    private suspend fun generateImageWithQwen(
+        context: Context,
+        modelName: String,
+        prompt: String,
+        aspectRatio: String
+    ): ApiResponse {
+        return try {
+            // 若选择的是通义千问图像模型（qwen-image / qwen-image-plus），直接走千问同步生成通道
+            if (modelName.startsWith("qwen-image")) {
+                return generateImageWithQwenImageSync(context, modelName, prompt, aspectRatio)
+            }
+
+            val apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.Qwen)
+            if (apiKey.isEmpty()) {
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = "请先在设置中配置Qwen API密钥"
+                )
+            }
+
+            val size = mapQwenSize(aspectRatio)
+            val request = QwenImageSynthesisRequest(
+                model = modelName,
+                input = QwenInput(prompt = prompt),
+                parameters = QwenParameters(
+                    size = size,
+                    n = 1,
+                    promptExtend = true,
+                    watermark = true
+                )
+            )
+
+            val createResp = RetrofitClient.qwenApiService.startImageSynthesis(
+                authorization = "Bearer $apiKey",
+                request = request
+            )
+
+            if (!createResp.isSuccessful) {
+                // 万相创建任务失败，回退到通义千问（qwen-image-plus）
+                return tryFallbackToQianwenImage(context, prompt, aspectRatio)
+            }
+
+            val bodyCreate = createResp.body()
+            val taskId = bodyCreate?.taskId
+                ?: bodyCreate?.output?.taskId
+                ?: extractTaskIdFromLocation(createResp.headers()["Location"])
+            if (taskId.isNullOrBlank()) {
+                // 万相返回未包含 task_id，回退到通义千问
+                return tryFallbackToQianwenImage(context, prompt, aspectRatio)
+            }
+
+            // 轮询查询
+            val start = System.currentTimeMillis()
+            val timeoutMs = 90_000L
+            val pollIntervalMs = 2_000L
+            var finalUrl: String? = null
+            var finalBase64: String? = null
+            var lastError: String? = null
+
+            while (System.currentTimeMillis() - start < timeoutMs) {
+                kotlinx.coroutines.delay(pollIntervalMs)
+                val taskResp = RetrofitClient.qwenApiService.getTask(
+                    authorization = "Bearer $apiKey",
+                    taskId = taskId
+                )
+
+                if (!taskResp.isSuccessful) {
+                    lastError = buildHttpErrorDetail(taskResp)
+                    continue
+                }
+                val body = taskResp.body()
+                val status = body?.output?.taskStatus?.uppercase() ?: ""
+                if (status == "SUCCEEDED") {
+                    val results = body?.output?.results.orEmpty()
+                    val first = results.firstOrNull()
+                    finalUrl = first?.url ?: first?.imageUrl
+                    finalBase64 = first?.b64Json ?: first?.imageBase64
+                    break
+                } else if (status == "FAILED") {
+                    // 任务失败，回退到通义千问
+                    return tryFallbackToQianwenImage(context, prompt, aspectRatio)
+                } else {
+                    // PENDING/RUNNING，继续轮询
+                }
+            }
+
+            if (finalUrl.isNullOrBlank() && finalBase64.isNullOrBlank()) {
+                // 未取到结果，回退到通义千问
+                return tryFallbackToQianwenImage(context, prompt, aspectRatio)
+            }
+
+            // 将图片立即保存到应用数据（避免24小时后失效）
+            val savedFileUrl = try {
+                if (!finalUrl.isNullOrBlank()) {
+                    saveImageToAppDataFromUrl(context, finalUrl, suggestedExt = "jpg")
+                } else {
+                    val raw = android.util.Base64.decode(finalBase64, android.util.Base64.DEFAULT)
+                    saveImageToAppDataFromBytes(context, raw, suggestedExt = "png")
+                }
+            } catch (e: Exception) {
+                // 保存失败则退回直接使用远程URL/数据URL（不理想，但不阻断显示）
+                if (!finalUrl.isNullOrBlank()) finalUrl else "data:image/png;base64,${finalBase64}"
+            }
+
+            ApiResponse(
+                imageUrl = savedFileUrl,
+                responseText = generateResponseText(ModelGroupType.Qwen, modelName, prompt),
+                success = true
+            )
+        } catch (e: Exception) {
+            // 异常时回退到通义千问
+            tryFallbackToQianwenImage(context, prompt, aspectRatio)
+        }
+    }
+
+    private fun mapQwenSize(aspectRatio: String): String {
+        // DashScope常见可用尺寸，若不确定则回落到 1024*1024
+        return when (aspectRatio) {
+            "1:1" -> "1024*1024"
+            "3:4" -> "768*1024"
+            "4:3" -> "1024*768"
+            "9:16" -> "1024*1792"
+            else -> "1024*1024"
+        }
+    }
+
+    // 通义千问（Qwen-Image 系列）尺寸映射（以官方示例分辨率为参考）
+    private fun mapQwenImageSize(aspectRatio: String): String {
+        return when (aspectRatio) {
+            "1:1" -> "1328*1328"
+            "3:4" -> "1140*1472"
+            "4:3" -> "1472*1140"
+            "9:16" -> "928*1664"
+            else -> "1328*1328"
+        }
+    }
+
+    // 通义千问（Qwen-Image / qwen-image-plus）同步生成
+    private suspend fun generateImageWithQwenImageSync(
+        context: Context,
+        modelName: String,
+        prompt: String,
+        aspectRatio: String
+    ): ApiResponse {
+        return try {
+            val apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.Qwen)
+            if (apiKey.isEmpty()) {
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = "请先在设置中配置Qwen API密钥"
+                )
+            }
+
+            val request = QwenImageGenRequest(
+                model = modelName,
+                input = QwenImageGenInput(
+                    messages = listOf(
+                        QwenImageGenMessage(
+                            role = "user",
+                            content = listOf(QwenImageGenContent(text = prompt))
+                        )
+                    )
+                ),
+                parameters = QwenImageGenParameters(
+                    size = mapQwenImageSize(aspectRatio),
+                    n = 1,
+                    promptExtend = true,
+                    watermark = true,
+                    negativePrompt = null
+                )
+            )
+
+            val resp = RetrofitClient.qwenApiService.generateImageWithQwenImage(
+                authorization = "Bearer $apiKey",
+                request = request
+            )
+
+            if (!resp.isSuccessful) {
+                val detail = buildHttpErrorDetail(resp)
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = detail,
+                    success = false,
+                    errorMessage = detail
+                )
+            }
+
+            val body = resp.body()
+            val contents = body?.output?.choices?.firstOrNull()?.message?.content.orEmpty()
+            val url = contents.firstOrNull { !it.image.isNullOrBlank() || !it.url.isNullOrBlank() }?.let { it.image ?: it.url }
+            val b64 = contents.firstOrNull { !it.b64Json.isNullOrBlank() }?.b64Json
+
+            if (url.isNullOrBlank() && b64.isNullOrBlank()) {
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "未返回图片数据",
+                    success = false,
+                    errorMessage = "未返回图片数据"
+                )
+            }
+
+            val saved = try {
+                if (!url.isNullOrBlank()) {
+                    // 远程URL或dataURL
+                    if (url.startsWith("http")) {
+                        saveImageToAppDataFromUrl(context, url, suggestedExt = "jpg")
+                    } else {
+                        // 例如 data:image/png;base64,xxx
+                        if (url.startsWith("data:")) {
+                            val base64Part = url.substringAfter("base64,", "")
+                            if (base64Part.isNotEmpty()) {
+                                val bytes = android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
+                                saveImageToAppDataFromBytes(context, bytes, suggestedExt = "png")
+                            } else url
+                        } else url
+                    }
+                } else {
+                    val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                    saveImageToAppDataFromBytes(context, bytes, suggestedExt = "png")
+                }
+            } catch (_: Exception) {
+                url ?: "data:image/png;base64,$b64"
+            }
+
+            ApiResponse(
+                imageUrl = saved,
+                responseText = generateResponseText(ModelGroupType.Qwen, modelName, prompt),
+                success = true
+            )
+        } catch (e: Exception) {
+            ApiResponse(
+                imageUrl = "",
+                responseText = e.message ?: "未知错误",
+                success = false,
+                errorMessage = e.message
+            )
+        }
+    }
+
+    // 万相失败时，自动回退到通义千问 qwen-image-plus
+    private suspend fun tryFallbackToQianwenImage(
+        context: Context,
+        prompt: String,
+        aspectRatio: String
+    ): ApiResponse {
+        // 默认使用 qwen-image-plus 作为回退模型
+        return generateImageWithQwenImageSync(
+            context = context,
+            modelName = "qwen-image-plus",
+            prompt = prompt,
+            aspectRatio = aspectRatio
+        )
+    }
+
+    private fun extractTaskIdFromLocation(location: String?): String? {
+        if (location.isNullOrBlank()) return null
+        val trimmed = location.trim()
+        val idx = trimmed.lastIndexOf('/')
+        if (idx == -1 || idx == trimmed.length - 1) return null
+        val last = trimmed.substring(idx + 1)
+        return last.takeIf { it.isNotBlank() }
+    }
+
+    private suspend fun saveImageToAppDataFromUrl(
+        context: Context,
+        url: String,
+        suggestedExt: String = "jpg"
+    ): String {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val dir = java.io.File(context.filesDir, "qwen_images").apply { mkdirs() }
+            val file = java.io.File(dir, "qwen_${System.currentTimeMillis()}.$suggestedExt")
+            java.net.URL(url).openStream().use { input ->
+                file.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            "file://${file.absolutePath}"
+        }
+    }
+
+    private suspend fun saveImageToAppDataFromBytes(
+        context: Context,
+        bytes: ByteArray,
+        suggestedExt: String = "png"
+    ): String {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val dir = java.io.File(context.filesDir, "qwen_images").apply { mkdirs() }
+            val file = java.io.File(dir, "qwen_${System.currentTimeMillis()}.$suggestedExt")
+            file.outputStream().use { it.write(bytes) }
+            "file://${file.absolutePath}"
         }
     }
 

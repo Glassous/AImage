@@ -7,6 +7,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 object RetrofitClient {
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/"
     private const val DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/"
+    private const val QWEN_BASE_URL = "https://dashscope.aliyuncs.com/"
 
     private val okHttpClient: OkHttpClient by lazy {
         val logging = HttpLoggingInterceptor().apply {
@@ -39,5 +40,17 @@ object RetrofitClient {
 
     val doubaoApiService: DoubaoApiService by lazy {
         doubaoRetrofit.create(DoubaoApiService::class.java)
+    }
+
+    private val qwenRetrofit: Retrofit by lazy {
+        Retrofit.Builder()
+            .baseUrl(QWEN_BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .client(okHttpClient)
+            .build()
+    }
+
+    val qwenApiService: QwenApiService by lazy {
+        qwenRetrofit.create(QwenApiService::class.java)
     }
 }
