@@ -66,6 +66,13 @@ object ApiService {
                     generateImageMock(provider, modelName, prompt)
                 }
             }
+            ModelGroupType.Doubao -> {
+                if (context != null) {
+                    generateImageWithDoubao(context, modelName, prompt, aspectRatio)
+                } else {
+                    generateImageMock(provider, modelName, prompt)
+                }
+            }
             else -> generateImageMock(provider, modelName, prompt)
         }
     }
@@ -267,6 +274,97 @@ object ApiService {
         } catch (_: Exception) {
             // 兜底返回原始错误体
             "HTTP ${code}: ${msg}\n${raw}"
+        }
+    }
+
+    // -------- 豆包 Doubao ARK 文生图 --------
+    private suspend fun generateImageWithDoubao(
+        context: Context,
+        modelName: String,
+        prompt: String,
+        aspectRatio: String
+    ): ApiResponse {
+        return try {
+            val apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.Doubao)
+            if (apiKey.isEmpty()) {
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = "请先在设置中配置豆包 API 密钥"
+                )
+            }
+
+            val size = mapDoubaoSize(aspectRatio)
+            val request = DoubaoImageRequest(
+                model = modelName,
+                prompt = prompt,
+                size = size,
+                responseFormat = "url",
+                watermark = false
+            )
+
+            val response = RetrofitClient.doubaoApiService.generateImage(
+                authorization = "Bearer $apiKey",
+                request = request
+            )
+
+            if (response.isSuccessful) {
+                val body = response.body()
+                val first = body?.data?.firstOrNull()
+                val url = first?.url
+                val b64 = first?.b64Json
+                when {
+                    !url.isNullOrBlank() -> {
+                        ApiResponse(
+                            imageUrl = url,
+                            responseText = generateResponseText(ModelGroupType.Doubao, modelName, prompt),
+                            success = true
+                        )
+                    }
+                    !b64.isNullOrBlank() -> {
+                        val dataUrl = "data:image/png;base64,$b64"
+                        ApiResponse(
+                            imageUrl = dataUrl,
+                            responseText = generateResponseText(ModelGroupType.Doubao, modelName, prompt),
+                            success = true
+                        )
+                    }
+                    else -> {
+                        ApiResponse(
+                            imageUrl = "",
+                            responseText = "",
+                            success = false,
+                            errorMessage = "API返回为空或未包含图片数据"
+                        )
+                    }
+                }
+            } else {
+                val detail = buildHttpErrorDetail(response)
+                ApiResponse(
+                    imageUrl = "",
+                    responseText = detail,
+                    success = false,
+                    errorMessage = detail
+                )
+            }
+        } catch (e: Exception) {
+            ApiResponse(
+                imageUrl = "",
+                responseText = e.message ?: "未知错误",
+                success = false,
+                errorMessage = e.message
+            )
+        }
+    }
+
+    private fun mapDoubaoSize(aspectRatio: String): String {
+        return when (aspectRatio) {
+            "1:1" -> "1024x1024"
+            "3:4" -> "768x1024"
+            "4:3" -> "1024x768"
+            "9:16" -> "1024x1792"
+            else -> "1024x1024"
         }
     }
 
