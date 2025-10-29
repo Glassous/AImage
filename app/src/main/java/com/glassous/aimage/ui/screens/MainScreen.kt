@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,8 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,6 +44,7 @@ import androidx.compose.animation.*
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import android.widget.Toast
 
 // 聊天窗口数据结构
 data class ChatWindow(
@@ -488,7 +492,9 @@ fun MainScreen(
                                         val apiResponse = com.glassous.aimage.api.ApiService.generateImage(
                                             provider = targetModelRef.group,
                                             modelName = targetModelRef.modelName,
-                                            prompt = broadcastInput
+                                            prompt = broadcastInput,
+                                            aspectRatio = selectedAspectRatio.displayName,
+                                            context = context
                                         )
 
                                         if (apiResponse.success) {
@@ -927,6 +933,40 @@ fun ChatWindowContent(
             }
         }
         
+        // 文本回复（AI文字部分）
+        if (window.responseText.isNotBlank()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        val clipboardManager = LocalClipboardManager.current
+                        val context = LocalContext.current
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            IconButton(onClick = {
+                                clipboardManager.setText(AnnotatedString(window.responseText))
+                                Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Filled.ContentCopy,
+                                    contentDescription = "复制文本"
+                                )
+                            }
+                        }
+                        Text(
+                            text = window.responseText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
+
         // 显示生成的图片
         window.imageUrl?.let { url ->
             item {

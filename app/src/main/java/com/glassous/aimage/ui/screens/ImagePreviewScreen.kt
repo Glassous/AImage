@@ -61,17 +61,28 @@ fun ImagePreviewScreen(
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val input: InputStream? = when {
+                    val bitmap: Bitmap? = when {
+                        url.startsWith("data:") -> {
+                            // data URL: data:<mime>;base64,<data>
+                            val comma = url.indexOf(',')
+                            if (comma > 0) {
+                                val base64 = url.substring(comma + 1)
+                                val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+                                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            } else null
+                        }
                         url.startsWith("content://") || url.startsWith("file://") -> {
-                            context.contentResolver.openInputStream(Uri.parse(url))
+                            context.contentResolver.openInputStream(Uri.parse(url))?.use { input ->
+                                BitmapFactory.decodeStream(input)
+                            }
                         }
                         else -> {
-                            java.net.URL(url).openStream()
+                            java.net.URL(url).openStream().use { input ->
+                                BitmapFactory.decodeStream(input)
+                            }
                         }
                     }
-                    if (input == null) return@withContext false
-                    val bitmap: Bitmap = BitmapFactory.decodeStream(input)
-                    input.close()
+                    if (bitmap == null) return@withContext false
 
                     val filename = "AImage_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date()) + ".jpg"
                     val contentValues = ContentValues().apply {

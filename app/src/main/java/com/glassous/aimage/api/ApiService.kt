@@ -1,5 +1,7 @@
 package com.glassous.aimage.api
 
+import android.content.Context
+import com.glassous.aimage.data.ModelConfigStorage
 import com.glassous.aimage.ui.screens.ModelGroupType
 import kotlinx.coroutines.delay
 import kotlin.random.Random
@@ -52,6 +54,226 @@ object ApiService {
     suspend fun generateImage(
         provider: ModelGroupType,
         modelName: String,
+        prompt: String,
+        aspectRatio: String = "1:1",
+        context: Context? = null
+    ): ApiResponse {
+        return when (provider) {
+            ModelGroupType.Google -> {
+                if (context != null) {
+                    generateImageWithGemini(context, modelName, prompt, aspectRatio)
+                } else {
+                    generateImageMock(provider, modelName, prompt)
+                }
+            }
+            else -> generateImageMock(provider, modelName, prompt)
+        }
+    }
+
+    // 真正的Gemini API调用
+    private suspend fun generateImageWithGemini(
+        context: Context,
+        modelName: String,
+        prompt: String,
+        aspectRatio: String
+    ): ApiResponse {
+        return try {
+            val apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.Google)
+            if (apiKey.isEmpty()) {
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = "请先在设置中配置Gemini API密钥"
+                )
+            }
+
+            // 根据模型名称选择正确的端点：
+            // - gemini-2.5-flash-image -> generateContent
+            // - imagen-4.0-* -> predict
+            val useGenerateContent = modelName.startsWith("gemini-")
+
+            if (useGenerateContent) {
+                val gcRequest = GeminiGenerateContentRequest(
+                    contents = listOf(
+                        GeminiContent(
+                            parts = listOf(
+                                GeminiPart(text = prompt)
+                            ),
+                            role = "user"
+                        )
+                    ),
+                    generationConfig = GeminiGenerationConfig(
+                        responseModalities = listOf("IMAGE"),
+                        imageConfig = GeminiImageConfig(
+                            aspectRatio = aspectRatio
+                        )
+                    )
+                )
+
+                val response = RetrofitClient.geminiApiService.generateContent(
+                    model = modelName,
+                    apiKey = apiKey,
+                    request = gcRequest
+                )
+
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    val candidate = body?.candidates?.firstOrNull()
+                    val parts = candidate?.content?.parts.orEmpty()
+                    // 优先查找图片
+                    val imagePart = parts.firstOrNull { it.inlineData?.data?.isNotEmpty() == true }
+                    if (imagePart?.inlineData?.data != null) {
+                        val mimeType = imagePart.inlineData.mimeType ?: "image/png"
+                        val imageUrl = "data:${mimeType};base64,${imagePart.inlineData.data}"
+                        val textPart = parts.firstOrNull { !it.text.isNullOrEmpty() }
+                        val responseText = textPart?.text
+                            ?: generateResponseText(ModelGroupType.Google, modelName, prompt)
+                        return ApiResponse(
+                            imageUrl = imageUrl,
+                            responseText = responseText,
+                            success = true
+                        )
+                    }
+
+                    // 如果没有图片，但可能有文本
+                    val textOnly = parts.firstOrNull { !it.text.isNullOrEmpty() }?.text
+                    if (!textOnly.isNullOrEmpty()) {
+                        return ApiResponse(
+                            imageUrl = "",
+                            responseText = textOnly,
+                            success = false,
+                            errorMessage = "API返回了文字回复但没有图片数据"
+                        )
+                    }
+
+                    ApiResponse(
+                        imageUrl = "",
+                        responseText = "",
+                        success = false,
+                        errorMessage = "API返回了空的响应数据"
+                    )
+                } else {
+                    val detail = buildHttpErrorDetail(response)
+                    ApiResponse(
+                        imageUrl = "",
+                        responseText = detail,
+                        success = false,
+                        errorMessage = detail
+                    )
+                }
+            } else {
+                // Imagen predict 路径
+                val request = GeminiRequest(
+                    instances = listOf(GeminiInstance(prompt = prompt)),
+                    parameters = GeminiParameters(
+                        sampleCount = 1,
+                        aspectRatio = aspectRatio,
+                        personGeneration = "allow_all"
+                    )
+                )
+
+                val response = RetrofitClient.geminiApiService.generateImage(
+                    model = modelName,
+                    apiKey = apiKey,
+                    request = request
+                )
+
+                if (response.isSuccessful) {
+                    val body = response.body()
+                    if (body?.predictions?.isNotEmpty() == true) {
+                        val prediction = body.predictions[0]
+                        val base64 = prediction.bytesBase64Encoded
+                        if (!base64.isNullOrEmpty()) {
+                            val mimeType = prediction.mimeType ?: "image/png"
+                            val imageUrl = "data:${mimeType};base64,${base64}"
+                            val responseText = prediction.generatedText
+                                ?: generateResponseText(ModelGroupType.Google, modelName, prompt)
+                            return ApiResponse(
+                                imageUrl = imageUrl,
+                                responseText = responseText,
+                                success = true
+                            )
+                        } else {
+                            val responseText = prediction.generatedText
+                            if (!responseText.isNullOrEmpty()) {
+                                return ApiResponse(
+                                    imageUrl = "",
+                                    responseText = responseText,
+                                    success = false,
+                                    errorMessage = "API返回了文字回复但没有图片数据"
+                                )
+                            }
+                        }
+                    }
+
+                    val errorMessage = body?.error?.message ?: "API返回了空的响应数据"
+                    ApiResponse(
+                        imageUrl = "",
+                        responseText = "",
+                        success = false,
+                        errorMessage = errorMessage
+                    )
+                } else {
+                    val detail = buildHttpErrorDetail(response)
+                    ApiResponse(
+                        imageUrl = "",
+                        responseText = detail,
+                        success = false,
+                        errorMessage = detail
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            ApiResponse(
+                imageUrl = "",
+                responseText = "",
+                success = false,
+                errorMessage = "网络请求异常：${e.message}"
+            )
+        }
+    }
+
+    private fun buildHttpErrorDetail(response: retrofit2.Response<*>): String {
+        val code = response.code()
+        val msg = response.message()
+        val raw = try {
+            response.errorBody()?.string()
+        } catch (_: Exception) { null }
+        if (raw.isNullOrBlank()) return "HTTP ${code}: ${msg}"
+        // 尝试解析标准 {"error": { code, status, message, details }}
+        return try {
+            val json = com.google.gson.JsonParser.parseString(raw).asJsonObject
+            val err = json.getAsJsonObject("error")
+            val eCode = err?.get("code")?.asString ?: code.toString()
+            val eStatus = err?.get("status")?.asString
+            val eMsg = err?.get("message")?.asString
+            val details = err?.get("details")?.toString()
+            buildString {
+                append("HTTP ")
+                append(code)
+                append(": ")
+                append(msg)
+                if (!eCode.isNullOrBlank() || !eStatus.isNullOrBlank() || !eMsg.isNullOrBlank()) {
+                    append("\nAPI错误：")
+                    if (!eCode.isNullOrBlank()) append("code=").append(eCode).append(" ")
+                    if (!eStatus.isNullOrBlank()) append("status=").append(eStatus).append(" ")
+                    if (!eMsg.isNullOrBlank()) append("message=").append(eMsg)
+                }
+                if (!details.isNullOrBlank()) {
+                    append("\n详情：").append(details)
+                }
+            }
+        } catch (_: Exception) {
+            // 兜底返回原始错误体
+            "HTTP ${code}: ${msg}\n${raw}"
+        }
+    }
+
+    // 模拟API调用（用于其他厂商或测试）
+    private suspend fun generateImageMock(
+        provider: ModelGroupType,
+        modelName: String,
         prompt: String
     ): ApiResponse {
         return try {
@@ -59,7 +281,7 @@ object ApiService {
             val delayRange = apiDelays[provider] ?: (2000L..3000L)
             val delay = Random.nextLong(delayRange.first, delayRange.last)
             delay(delay)
-            
+
             // 模拟网络失败
             val successRate = successRates[provider] ?: 0.9
             if (Random.nextDouble() > successRate) {
@@ -70,20 +292,20 @@ object ApiService {
                     errorMessage = "网络请求失败，请重试"
                 )
             }
-            
+
             // 随机选择该厂商的模拟图片
             val images = mockImages[provider] ?: mockImages[ModelGroupType.Google]!!
             val randomImage = images[Random.nextInt(images.size)]
-            
+
             // 生成厂商特定的响应文本
             val responseText = generateResponseText(provider, modelName, prompt)
-            
+
             ApiResponse(
                 imageUrl = randomImage,
                 responseText = responseText,
                 success = true
             )
-            
+
         } catch (e: Exception) {
             ApiResponse(
                 imageUrl = "",
