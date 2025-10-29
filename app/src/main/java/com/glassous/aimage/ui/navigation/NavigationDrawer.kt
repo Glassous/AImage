@@ -3,18 +3,23 @@ package com.glassous.aimage.ui.navigation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import com.glassous.aimage.ui.screens.HistoryItem
+import com.glassous.aimage.R
+import com.glassous.aimage.ui.screens.ModelGroupType
 
 data class DrawerItem(
     val icon: ImageVector,
@@ -22,16 +27,18 @@ data class DrawerItem(
     val onClick: () -> Unit
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun AppNavigationDrawer(
     onNewConversation: () -> Unit,
-    onHistory: () -> Unit,
     onSettings: () -> Unit,
+    onHistoryItemClick: (HistoryItem) -> Unit,
+    onDeleteHistoryItem: (HistoryItem) -> Unit,
+    activeHistoryIds: List<String>,
+    historyItems: List<HistoryItem>,
     modifier: Modifier = Modifier
 ) {
-    // 历史记录列表数据（删除预设，后续接入真实数据源）
-    val historyItems = remember { emptyList<HistoryItem>() }
+    // 历史记录由上层传入
 
     ModalDrawerSheet(
         modifier = modifier,
@@ -41,15 +48,15 @@ fun AppNavigationDrawer(
         Column(modifier = Modifier.fillMaxHeight()) {
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 顶部中部：标题“AImage”
+            // 顶部：标题“AImage”居左显示
             Text(
                 text = "AImage",
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                textAlign = TextAlign.Center
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                textAlign = TextAlign.Start
             )
 
             // 顶部：新建对话
@@ -58,26 +65,26 @@ fun AppNavigationDrawer(
                     Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "新建对话",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 },
                 label = {
                     Text(
                         text = "新建对话",
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 },
                 selected = false,
                 onClick = onNewConversation,
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
                 colors = NavigationDrawerItemDefaults.colors(
-                    unselectedContainerColor = MaterialTheme.colorScheme.surface,
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    unselectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    selectedTextColor = MaterialTheme.colorScheme.onSecondaryContainer
                 )
             )
 
@@ -90,36 +97,74 @@ fun AppNavigationDrawer(
                     .weight(1f),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                items(historyItems) { item ->
-                    NavigationDrawerItem(
-                        icon = {
-                            Icon(
-                                imageVector = Icons.Default.History,
-                                contentDescription = "历史记录",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                items(
+                    items = historyItems,
+                    key = { it.id }
+                ) { item ->
+                    var showDeleteDialog by remember { mutableStateOf(false) }
+                    Column {
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            // 展示内容
+                            NavigationDrawerItem(
+                                icon = {
+                                    val logo = item.provider.logoRes()
+                                    androidx.compose.foundation.Image(
+                                        painter = painterResource(id = logo),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        text = item.prompt,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                selected = activeHistoryIds.contains(item.id),
+                                onClick = {},
+                                modifier = Modifier
+                                    .padding(NavigationDrawerItemDefaults.ItemPadding),
+                                colors = NavigationDrawerItemDefaults.colors(
+                                    unselectedContainerColor = MaterialTheme.colorScheme.surface,
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
                             )
-                        },
-                        label = {
-                            Text(
-                                text = item.prompt,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+
+                            // 交互覆盖层：处理点击与长按
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .combinedClickable(
+                                        onClick = { onHistoryItemClick(item) },
+                                        onLongClick = { showDeleteDialog = true }
+                                    )
                             )
-                        },
-                        selected = false,
-                        onClick = { onHistory() },
-                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-                        colors = NavigationDrawerItemDefaults.colors(
-                            unselectedContainerColor = MaterialTheme.colorScheme.surface,
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    )
+                        }
+
+                        if (showDeleteDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showDeleteDialog = false },
+                                title = { Text("删除记录") },
+                                text = { Text("确定要删除这条历史记录吗？") },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        showDeleteDialog = false
+                                        onDeleteHistoryItem(item)
+                                    }) { Text("删除") }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = { showDeleteDialog = false }) { Text("取消") }
+                                }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -129,14 +174,14 @@ fun AppNavigationDrawer(
                     Icon(
                         imageVector = Icons.Default.Settings,
                         contentDescription = "设置",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 },
                 label = {
                     Text(
                         text = "设置",
                         style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 },
                 selected = false,
@@ -145,14 +190,21 @@ fun AppNavigationDrawer(
                     .padding(NavigationDrawerItemDefaults.ItemPadding)
                     .padding(bottom = 8.dp),
                 colors = NavigationDrawerItemDefaults.colors(
-                    unselectedContainerColor = MaterialTheme.colorScheme.surface,
-                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    unselectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    selectedIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    selectedTextColor = MaterialTheme.colorScheme.onSecondaryContainer
                 )
             )
         }
     }
+}
+
+// 本文件内的简易映射
+private fun ModelGroupType.logoRes(): Int = when (this) {
+    ModelGroupType.Google -> R.drawable.gemini
+    ModelGroupType.Doubao -> R.drawable.doubao
+    ModelGroupType.Qwen -> R.drawable.qwen
 }

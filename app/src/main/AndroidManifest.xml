@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 网络访问权限：用于加载网络图片和访问外部链接 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 可选：用于优化网络状态判断（非必需） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 仅在 Android 9 及以下请求写存储权限；Android 10+ 使用分区存储 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

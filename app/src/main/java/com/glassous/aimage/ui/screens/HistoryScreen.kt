@@ -23,17 +23,17 @@ data class HistoryItem(
     val prompt: String,
     val imageUrl: String?,
     val timestamp: String,
-    val model: String
+    val model: String,
+    val provider: ModelGroupType
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
     onBackClick: () -> Unit,
+    historyItems: List<HistoryItem>,
     modifier: Modifier = Modifier
 ) {
-    // 历史记录数据：删除预设，等待实际数据源接入
-    val historyItems = remember { emptyList<HistoryItem>() }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -101,7 +101,10 @@ fun HistoryScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(historyItems) { item ->
+                items(
+                    items = historyItems,
+                    key = { it.id }
+                ) { item ->
                     HistoryItemCard(
                         item = item,
                         onClick = {
