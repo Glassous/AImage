@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
@@ -48,6 +49,7 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LoadingIndicatorDefaults
 import com.glassous.aimage.R
 import com.glassous.aimage.data.ModelConfigStorage
+import com.glassous.aimage.api.PolishAIClient
 import kotlinx.coroutines.launch
 import java.util.UUID
 import androidx.compose.animation.*
@@ -111,6 +113,45 @@ fun MainScreen(
     val groupModels = remember { mutableStateMapOf<ModelGroupType, List<UserModel>>() }
     var defaultRef by remember { mutableStateOf<ModelConfigStorage.DefaultModelRef?>(null) }
     var currentRef by remember { mutableStateOf<ModelConfigStorage.DefaultModelRef?>(null) }
+
+    // 翻译相关状态（复用提示词助写页的模型配置与流式输出）
+    var showTranslateDialog by remember { mutableStateOf(false) }
+    var translateStreaming by remember { mutableStateOf(false) }
+    var translateResultText by remember { mutableStateOf("") }
+    var translateHandle by remember { mutableStateOf<PolishAIClient.Handle?>(null) }
+    var translateCfg by remember { mutableStateOf(PromptAIConfigStorage.load(context)) }
+
+    fun startTranslateStreaming(source: String) {
+        val cfg = translateCfg
+        if (cfg == null) {
+            Toast.makeText(context, "请先在提示词助写页配置AI模型", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val (flow, handle) = PolishAIClient.streamRefine(
+            PolishAIClient.Config(cfg.baseUrl, cfg.apiKey, cfg.model),
+            source,
+            PolishAIClient.Mode.TranslateEnglish
+        )
+        translateHandle = handle
+        translateStreaming = true
+        translateResultText = ""
+        scope.launch {
+            flow.collect { event ->
+                when (event) {
+                    is PolishAIClient.Event.Chunk -> translateResultText += event.text
+                    is PolishAIClient.Event.Error -> {
+                        translateStreaming = false
+                        Toast.makeText(context, "翻译失败：${event.message}", Toast.LENGTH_SHORT).show()
+                    }
+                    is PolishAIClient.Event.Completed -> translateStreaming = false
+                }
+            }
+        }
+    }
+    fun cancelTranslateStreaming() {
+        try { translateHandle?.cancel() } catch (_: Exception) {}
+        translateStreaming = false
+    }
 
     // 检查是否有可用模型
     val hasAvailableModel = (currentRef ?: defaultRef) != null || 
@@ -317,67 +358,69 @@ fun MainScreen(
                 )
             )
         },
+        // 悬浮按钮改由内容层覆盖实现，以支持居左显示
         bottomBar = {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 8.dp
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedTextField(
-                        value = getCurrentWindow()?.inputText ?: "",
-                        onValueChange = { newText ->
-                            updateCurrentWindow { window ->
-                                window.copy(inputText = newText)
-                            }
-                        },
-                        placeholder = { Text("描述您想要生成的图片...") },
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
-                            .animateContentSize(
-                                animationSpec = tween(
-                                    durationMillis = 220,
-                                    easing = FastOutSlowInEasing
-                                )
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = getCurrentWindow()?.inputText ?: "",
+                            onValueChange = { newText ->
+                                updateCurrentWindow { window ->
+                                    window.copy(inputText = newText)
+                                }
+                            },
+                            placeholder = { Text("描述您想要生成的图片...") },
+                            modifier = Modifier
+                                .weight(1f)
+                                .animateContentSize(
+                                    animationSpec = tween(
+                                        durationMillis = 220,
+                                        easing = FastOutSlowInEasing
+                                    )
+                                ),
+                            enabled = getCurrentWindow()?.isLoading?.not() ?: true,
+                            maxLines = 6,
+                            minLines = 1,
+                            shape = RoundedCornerShape(24.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline
                             ),
-                        enabled = getCurrentWindow()?.isLoading?.not() ?: true,
-                        maxLines = 6,
-                        minLines = 1,
-                        shape = RoundedCornerShape(24.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                        ),
-                        leadingIcon = {
-                            // 图片比例选择按钮（内嵌在输入框内）
-                            Surface(
-                                onClick = { showAspectRatioMenu = !showAspectRatioMenu },
-                                modifier = Modifier
-                                    .padding(start = 4.dp)
-                                    .wrapContentSize(),
-                                shape = RoundedCornerShape(16.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                            ) {
-                                Text(
-                                    text = when (selectedAspectRatio) {
-                                        AspectRatio.SQUARE -> "1:1"
-                                        AspectRatio.PORTRAIT_3_4 -> "3:4"
-                                        AspectRatio.LANDSCAPE_4_3 -> "4:3"
-                                        AspectRatio.PORTRAIT_9_16 -> "9:16"
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        },
+                            leadingIcon = {
+                                // 图片比例选择按钮（内嵌在输入框内）
+                                Surface(
+                                    onClick = { showAspectRatioMenu = !showAspectRatioMenu },
+                                    modifier = Modifier
+                                        .padding(start = 4.dp)
+                                        .wrapContentSize(),
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                ) {
+                                    Text(
+                                        text = when (selectedAspectRatio) {
+                                            AspectRatio.SQUARE -> "1:1"
+                                            AspectRatio.PORTRAIT_3_4 -> "3:4"
+                                            AspectRatio.LANDSCAPE_4_3 -> "4:3"
+                                            AspectRatio.PORTRAIT_9_16 -> "9:16"
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            },
                         trailingIcon = {
                             if (chatWindows.size >= 2) {
                                 Column(
@@ -582,19 +625,25 @@ fun MainScreen(
                             )
                         }
                         }
+                        }
                     }
                 }
             }
         }
     ) { paddingValues ->
-        if (chatWindows.isEmpty()) {
-            // 空状态 - 显示欢迎界面
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                contentAlignment = Alignment.Center
-            ) {
+        // 将内容区域包裹在窗口级 Box 中，方便在其上层叠右侧固定快捷栏
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            if (chatWindows.isEmpty()) {
+                // 空状态 - 显示欢迎界面
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -611,14 +660,13 @@ fun MainScreen(
                     )
                 }
             }
-        } else {
-            // 多窗口内容区域（改为上下滑动切换窗口）
-            VerticalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-            ) { pageIndex ->
+            } else {
+                // 多窗口内容区域（改为上下滑动切换窗口）
+                VerticalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                ) { pageIndex ->
                 val window = chatWindows[pageIndex]
                 // 在可组合作用域中获取密度并转换阈值，避免在pointerInput中访问LocalDensity.current
                 val thresholdPx = with(LocalDensity.current) { 32.dp.toPx() }
@@ -663,92 +711,203 @@ fun MainScreen(
                             }
                     )
 
-                    // 快捷切换栏（无背景遮罩）
-                    AnimatedVisibility(
-                        visible = showRightQuickBar,
-                        enter = fadeIn() + slideInHorizontally(initialOffsetX = { it / 2 }),
-                        exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it / 2 })
+                    // 已移除左滑呼出：仅保留顶部按钮打开，以及点击非侧栏区域关闭
+                }
+            }
+            }
+
+            // 将右侧快捷切换栏外移到窗口级覆盖层，避免随窗口内容切换移动
+            AnimatedVisibility(
+                visible = showRightQuickBar,
+                enter = fadeIn() + slideInHorizontally(initialOffsetX = { it / 2 }),
+                exit = fadeOut() + slideOutHorizontally(targetOffsetX = { it / 2 })
+            ) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    // 点击非侧边栏区域关闭
+                    Spacer(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                            ) { showRightQuickBar = false }
+                    )
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .width(72.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
+                        tonalElevation = 2.dp
                     ) {
-                        Row(modifier = Modifier.fillMaxSize()) {
-                            // 点击非侧边栏区域关闭
-                            Spacer(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .clickable { showRightQuickBar = false }
-                            )
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .width(72.dp),
-                                color = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp),
-                                tonalElevation = 2.dp
-                            ) {
-                                // 图标列表
-                                val scrollState = rememberScrollState()
-                                Column(
+                        // 图标列表
+                        val scrollState = rememberScrollState()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            chatWindows.forEachIndexed { idx, w ->
+                                val logo = w.modelRef?.group?.logoRes()
+                                val selected = idx == pagerState.currentPage
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .verticalScroll(scrollState)
-                                        .padding(vertical = 12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                            else Color.Transparent
+                                        )
+                                        .clickable {
+                                            scope.launch { pagerState.animateScrollToPage(idx) }
+                                        },
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    chatWindows.forEachIndexed { idx, w ->
-                                        val logo = w.modelRef?.group?.logoRes()
-                                        val selected = idx == pagerState.currentPage
+                                    // 生成完成标识：在logo后方叠加绿色背景
+                                    if (!w.isLoading && w.imageUrl != null) {
                                         Box(
                                             modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(
-                                                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                                    else Color.Transparent
-                                                )
-                                                .clickable {
-                                                    scope.launch { pagerState.animateScrollToPage(idx) }
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            if (logo != null) {
-                                                Image(
-                                                    painter = painterResource(id = logo),
-                                                    contentDescription = "跳转窗口${idx + 1}",
-                                                    modifier = Modifier.size(28.dp)
-                                                )
-                                            } else {
-                                                Icon(
-                                                    imageVector = Icons.Default.Menu,
-                                                    contentDescription = "未设置模型",
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(24.dp)
-                                                )
-                                            }
-                                        }
+                                                .size(36.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(Color(0xFF4CAF50).copy(alpha = 0.22f))
+                                        )
                                     }
-
-                                    // 新建窗口按钮（点击呼出，再次点击顶部按钮可关闭）
-                                    Box(
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
-                                            .clickable { showNewChatDialog = true },
-                                        contentAlignment = Alignment.Center
-                                    ) {
+                                    // 在图标背面显示生成动画（仅当前窗口正在生成时）
+                                    if (w.isLoading) {
+                                        androidx.compose.material3.CircularProgressIndicator(
+                                            modifier = Modifier.size(36.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                                            strokeWidth = 3.dp
+                                        )
+                                    }
+                                    if (logo != null) {
+                                        Image(
+                                            painter = painterResource(id = logo),
+                                            contentDescription = "跳转窗口${idx + 1}",
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    } else {
                                         Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = "新建聊天窗口",
-                                            tint = MaterialTheme.colorScheme.primary
+                                            imageVector = Icons.Default.Menu,
+                                            contentDescription = "未设置模型",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(24.dp)
                                         )
                                     }
                                 }
                             }
+
+                            // 新建窗口按钮（点击呼出，再次点击顶部按钮可关闭）
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                    .clickable { showNewChatDialog = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "新建聊天窗口",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                     }
-                    // 已移除左滑呼出：仅保留顶部按钮打开，以及点击非侧栏区域关闭
+                }
+            }
+
+            // 页面左下角的悬浮英译按钮（不与输入框同容器，背后透明）
+            SmallFloatingActionButton(
+                onClick = {
+                    val source = getCurrentWindow()?.inputText?.trim().orEmpty()
+                    if (source.isBlank()) {
+                        Toast.makeText(context, "请输入内容后再翻译", Toast.LENGTH_SHORT).show()
+                    } else {
+                        showTranslateDialog = true
+                        startTranslateStreaming(source)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(16.dp)
+            ) {
+                if (translateStreaming) {
+                    LoadingIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        polygons = LoadingIndicatorDefaults.IndeterminateIndicatorPolygons
+                    )
+                } else {
+                    Icon(imageVector = Icons.Filled.Language, contentDescription = "一键英译")
+                }
+            }
+        }
+    }
+
+    // 英译结果弹窗（支持流式输出、取消、重新翻译、插入）
+    if (showTranslateDialog) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = {
+            cancelTranslateStreaming(); showTranslateDialog = false
+        }) {
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                tonalElevation = 6.dp,
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "英文翻译结果",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (translateStreaming) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    Surface(
+                        tonalElevation = 2.dp,
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = translateResultText,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = {
+                                cancelTranslateStreaming()
+                                val source = getCurrentWindow()?.inputText?.trim().orEmpty()
+                                if (source.isNotBlank()) startTranslateStreaming(source)
+                            }) { Text("重新翻译") }
+                            TextButton(onClick = {
+                                updateCurrentWindow { w -> w.copy(inputText = translateResultText) }
+                                cancelTranslateStreaming(); showTranslateDialog = false
+                            }) { Text("插入") }
+                        }
+                        TextButton(onClick = {
+                            cancelTranslateStreaming(); showTranslateDialog = false
+                        }) { Text("取消") }
+                    }
                 }
             }
         }
@@ -1038,41 +1197,7 @@ fun ChatWindowContent(
             }
         }
         
-        // 文本回复（AI文字部分）
-        if (window.responseText.isNotBlank()) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        val clipboardManager = LocalClipboardManager.current
-                        val context = LocalContext.current
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            IconButton(onClick = {
-                                clipboardManager.setText(AnnotatedString(window.responseText))
-                                Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Filled.ContentCopy,
-                                    contentDescription = "复制文本"
-                                )
-                            }
-                        }
-                        Text(
-                            text = window.responseText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-            }
-        }
-
-        // 显示生成的图片
+        // 显示生成的图片（移动到文字回复之前）
         window.imageUrl?.let { url ->
             item {
                 Card(
@@ -1126,6 +1251,40 @@ fun ChatWindowContent(
                         }
                         
                         // 按需求移除图片框中的“生成说明”文本
+                    }
+                }
+            }
+        }
+
+        // 文本回复（AI文字部分）移到图片框下方
+        if (window.responseText.isNotBlank()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        val clipboardManager = LocalClipboardManager.current
+                        val context = LocalContext.current
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            IconButton(onClick = {
+                                clipboardManager.setText(AnnotatedString(window.responseText))
+                                Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Filled.ContentCopy,
+                                    contentDescription = "复制文本"
+                                )
+                            }
+                        }
+                        Text(
+                            text = window.responseText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
             }
