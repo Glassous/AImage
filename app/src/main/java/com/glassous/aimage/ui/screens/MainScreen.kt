@@ -839,8 +839,7 @@ fun MainScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(16.dp),
-                    containerColor = Color.Transparent
+                        .padding(16.dp)
                 ) {
                     if (translateStreaming) {
                         LoadingIndicator(
