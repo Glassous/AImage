@@ -49,6 +49,7 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LoadingIndicatorDefaults
 import com.glassous.aimage.R
 import com.glassous.aimage.data.ModelConfigStorage
+import com.glassous.aimage.data.ThemeStorage
 import com.glassous.aimage.api.PolishAIClient
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -120,6 +121,8 @@ fun MainScreen(
     var translateResultText by remember { mutableStateOf("") }
     var translateHandle by remember { mutableStateOf<PolishAIClient.Handle?>(null) }
     var translateCfg by remember { mutableStateOf(PromptAIConfigStorage.load(context)) }
+    ThemeStorage.ensureInitialized(context)
+    val showTranslateFab by ThemeStorage.showTranslateFabFlow.collectAsState(initial = ThemeStorage.loadShowTranslateFab(context))
 
     fun startTranslateStreaming(source: String) {
         val cfg = translateCfg
@@ -822,29 +825,32 @@ fun MainScreen(
                 }
             }
 
-            // 页面左下角的悬浮英译按钮（不与输入框同容器，背后透明）
-            SmallFloatingActionButton(
-                onClick = {
-                    val source = getCurrentWindow()?.inputText?.trim().orEmpty()
-                    if (source.isBlank()) {
-                        Toast.makeText(context, "请输入内容后再翻译", Toast.LENGTH_SHORT).show()
+            // 页面左下角的悬浮英译按钮（不与输入框同容器，背后透明），受设置页开关控制
+            if (showTranslateFab == true) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        val source = getCurrentWindow()?.inputText?.trim().orEmpty()
+                        if (source.isBlank()) {
+                            Toast.makeText(context, "请输入内容后再翻译", Toast.LENGTH_SHORT).show()
+                        } else {
+                            showTranslateDialog = true
+                            startTranslateStreaming(source)
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(16.dp),
+                    containerColor = Color.Transparent
+                ) {
+                    if (translateStreaming) {
+                        LoadingIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            polygons = LoadingIndicatorDefaults.IndeterminateIndicatorPolygons
+                        )
                     } else {
-                        showTranslateDialog = true
-                        startTranslateStreaming(source)
+                        Icon(imageVector = Icons.Filled.Language, contentDescription = "一键英译")
                     }
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(16.dp)
-            ) {
-                if (translateStreaming) {
-                    LoadingIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        polygons = LoadingIndicatorDefaults.IndeterminateIndicatorPolygons
-                    )
-                } else {
-                    Icon(imageVector = Icons.Filled.Language, contentDescription = "一键英译")
                 }
             }
         }

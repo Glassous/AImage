@@ -202,6 +202,7 @@ private fun ThemeSettingCard(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     ThemeStorage.ensureInitialized(context)
     val currentMode by ThemeStorage.themeModeFlow.collectAsState(initial = ThemeStorage.loadThemeMode(context))
+    val showTranslateFab by ThemeStorage.showTranslateFabFlow.collectAsState(initial = ThemeStorage.loadShowTranslateFab(context))
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -243,6 +244,26 @@ private fun ThemeSettingCard(modifier: Modifier = Modifier) {
                     selected = currentMode == ThemeMode.Dark,
                     onClick = { ThemeStorage.saveThemeMode(context, ThemeMode.Dark) }
                 )
+            }
+
+            // 仅当 AI 助写的 AI 配置完成时，显示“主页翻译按钮”开关
+            val aiCfgReady = PromptAIConfigStorage.load(context) != null
+            if (aiCfgReady) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "显示主页翻译按钮",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Switch(
+                        checked = showTranslateFab == true,
+                        onCheckedChange = { ThemeStorage.saveShowTranslateFab(context, it) }
+                    )
+                }
             }
         }
     }
