@@ -9,6 +9,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -289,6 +290,16 @@ fun MainScreen(
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "新建聊天窗口"
+                        )
+                    }
+                    // 提示词助写入口按钮
+                    val context = LocalContext.current
+                    IconButton(onClick = {
+                        context.startActivity(android.content.Intent(context, com.glassous.aimage.PromptAssistantActivity::class.java))
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "提示词助写"
                         )
                     }
                     // 呼出/关闭右侧快捷栏按钮（靠右，位于 + 号右侧）
