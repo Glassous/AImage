@@ -11,6 +11,7 @@ import com.glassous.aimage.ui.navigation.AppNavigationDrawer
 import com.glassous.aimage.SettingsActivity
 import kotlinx.coroutines.launch
 import com.glassous.aimage.data.ChatHistoryStorage
+import kotlinx.coroutines.Dispatchers
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,6 +74,10 @@ fun AImageApp(
                     historyItems.removeAll { it.id == historyItem.id }
                     activeHistoryIds.remove(historyItem.id)
                     ChatHistoryStorage.saveAll(context, historyItems.toList())
+                    // 云端同步：删除后更新远端ID表并移除对应文件（后台线程防卡顿）
+                    scope.launch(Dispatchers.IO) {
+                        com.glassous.aimage.oss.OssSyncManager.onHistoryDeleted(context, historyItem.id)
+                    }
                 },
                 activeHistoryIds = activeHistoryIds,
                 historyItems = historyItems
@@ -94,6 +99,10 @@ fun AImageApp(
                     historyItems.add(0, item)
                     // 使用快照副本避免潜在的并发修改问题
                     ChatHistoryStorage.saveAll(context, historyItems.toList())
+                    // 云端同步：新增条目后上传并更新ID表（后台线程防卡顿）
+                    scope.launch(Dispatchers.IO) {
+                        com.glassous.aimage.oss.OssSyncManager.onHistoryAdded(context, item)
+                    }
                 },
                 onImageClick = { url ->
                     // 跳转至独立的图片预览 Activity

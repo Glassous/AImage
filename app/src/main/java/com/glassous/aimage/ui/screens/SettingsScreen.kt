@@ -21,7 +21,10 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.launch
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LinearWavyProgressIndicator
 import com.glassous.aimage.ModelConfigActivity
+import com.glassous.aimage.OssConfigActivity
 import com.glassous.aimage.R
 import com.glassous.aimage.data.BackupManager
 import com.glassous.aimage.data.ModelConfigStorage
@@ -128,6 +131,10 @@ fun SettingsScreen(
             // 数据备份模块
             item {
                 BackupSettingCard()
+            }
+            // 云端同步模块（OSS）
+            item {
+                CloudSyncSettingCard()
             }
         }
     }
@@ -420,20 +427,24 @@ private fun BackupSettingCard(modifier: Modifier = Modifier) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "数据备份",
+                text = "本地数据备份",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Medium
             )
 
             Text(
-                text = "导入/导出用户模型、API Key、默认模型与历史记录（图片转Base64并随JSON保存）",
+                text = "在本地导入/导出用户模型、API Key、默认模型与历史记录（图片转Base64并随JSON保存）",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FilledTonalButton(onClick = { exportLauncher.launch("aimage-backup.json") }, enabled = !exporting) {
+                FilledTonalButton(
+                    onClick = { exportLauncher.launch("aimage-backup.json") },
+                    enabled = !exporting,
+                    modifier = Modifier.weight(1f)
+                ) {
                     if (exporting) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
@@ -442,7 +453,10 @@ private fun BackupSettingCard(modifier: Modifier = Modifier) {
                         Text("导出备份")
                     }
                 }
-                OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) }) {
+                OutlinedButton(
+                    onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text("导入备份")
                 }
             }
@@ -455,5 +469,114 @@ private fun BackupSettingCard(modifier: Modifier = Modifier) {
                 )
             }
         }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var showDialog by remember { mutableStateOf(false) }
+    var progressText by remember { mutableStateOf("准备中…") }
+    val configured = com.glassous.aimage.oss.OssConfigStorage.isConfigured(context)
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "云端同步（OSS）",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
+
+            Text(
+                text = "配置阿里云 OSS 后，可将模型配置与历史记录上传到云端或从云端下载到本地。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+            )
+
+            // 第一行：配置按钮独占一行
+            Row(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = { context.startActivity(Intent(context, com.glassous.aimage.OssConfigActivity::class.java)) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("配置OSS")
+                }
+            }
+
+            // 第二行：上传/下载各占一半
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FilledTonalButton(
+                    onClick = {
+                        showDialog = true
+                        progressText = "正在上传…"
+                        scope.launch {
+                            com.glassous.aimage.oss.OssSyncManager.uploadToCloud(context) { step ->
+                                progressText = step
+                            }
+                            showDialog = false
+                        }
+                    },
+                    enabled = configured,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("上传到云端")
+                }
+
+                FilledTonalButton(
+                    onClick = {
+                        showDialog = true
+                        progressText = "正在下载…"
+                        scope.launch {
+                            com.glassous.aimage.oss.OssSyncManager.downloadFromCloud(context) { step ->
+                                progressText = step
+                            }
+                            showDialog = false
+                        }
+                    },
+                    enabled = configured,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("从云端下载")
+                }
+            }
+
+            if (!configured) {
+                Text(
+                    text = "请先完成OSS配置后再进行云端同步。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+    }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { /* 同步过程中不可关闭 */ },
+            confirmButton = {},
+            title = { Text("正在同步") },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(progressText)
+                    LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+        )
     }
 }
