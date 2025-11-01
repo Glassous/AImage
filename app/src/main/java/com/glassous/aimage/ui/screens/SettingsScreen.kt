@@ -1,6 +1,7 @@
 package com.glassous.aimage.ui.screens
 
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,8 +18,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.launch
 import com.glassous.aimage.ModelConfigActivity
 import com.glassous.aimage.R
+import com.glassous.aimage.data.BackupManager
 import com.glassous.aimage.data.ModelConfigStorage
 import com.glassous.aimage.data.ThemeMode
 import com.glassous.aimage.data.ThemeStorage
@@ -118,6 +123,11 @@ fun SettingsScreen(
                     ),
                     onClick = { showSelector = true }
                 )
+            }
+
+            // 数据备份模块
+            item {
+                BackupSettingCard()
             }
         }
     }
@@ -349,6 +359,101 @@ private fun SettingsItemCard(
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BackupSettingCard(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var exporting by remember { mutableStateOf(false) }
+    var importSummary by remember { mutableStateOf<String?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            exporting = true
+            scope.launch {
+                try {
+                    val json = BackupManager.createBackup(context)
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(json.toByteArray(Charsets.UTF_8))
+                    }
+                } catch (_: Exception) { /* ignore */ }
+                exporting = false
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                try {
+                    val json = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.toString(Charsets.UTF_8)
+                    if (json != null) {
+                        val result = BackupManager.restoreBackup(context, json)
+                        importSummary = "已恢复 模型:${result.modelsRestored} 项，历史记录:${result.historyRestored} 条"
+                    }
+                } catch (_: Exception) {
+                    importSummary = "导入失败，请检查文件"
+                }
+            }
+        }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "数据备份",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
+
+            Text(
+                text = "导入/导出用户模型、API Key、默认模型与历史记录（图片转Base64并随JSON保存）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FilledTonalButton(onClick = { exportLauncher.launch("aimage-backup.json") }, enabled = !exporting) {
+                    if (exporting) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("正在导出…")
+                    } else {
+                        Text("导出备份")
+                    }
+                }
+                OutlinedButton(onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) }) {
+                    Text("导入备份")
+                }
+            }
+
+            if (importSummary != null) {
+                Text(
+                    text = importSummary!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
         }
     }
 }

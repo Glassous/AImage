@@ -612,6 +612,12 @@ fun MainScreen(
                             MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                         contentColor = if (chatWindows.isNotEmpty() && chatWindows.any { it.modelRef != null }) 
                             MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        elevation = FloatingActionButtonDefaults.elevation(
+                            defaultElevation = 0.dp,
+                            pressedElevation = 0.dp,
+                            focusedElevation = 0.dp,
+                            hoveredElevation = 0.dp
+                        ),
                         modifier = Modifier.size(56.dp)
                         ) {
                         val currentWindow = getCurrentWindow()
@@ -684,35 +690,37 @@ fun MainScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // 右侧窄手势区：较小滑动距离即可切换窗口
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .width(64.dp)
-                            .align(Alignment.CenterEnd)
-                            .pointerInput(pagerState.currentPage, chatWindows.size, thresholdPx) {
-                                var dyAcc = 0f
-                                detectDragGestures(
-                                    onDragStart = { dyAcc = 0f },
-                                    onDrag = { change, dragAmount ->
-                                        dyAcc += dragAmount.y
-                                        if (dyAcc <= -thresholdPx) {
-                                            if (pagerState.currentPage < chatWindows.size - 1) {
-                                                scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                    // 右侧窄手势区：仅在右侧栏展开时启用，收缩时不拦截手势
+                    if (showRightQuickBar) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .width(64.dp)
+                                .align(Alignment.CenterEnd)
+                                .pointerInput(pagerState.currentPage, chatWindows.size, thresholdPx) {
+                                    var dyAcc = 0f
+                                    detectDragGestures(
+                                        onDragStart = { dyAcc = 0f },
+                                        onDrag = { change, dragAmount ->
+                                            dyAcc += dragAmount.y
+                                            if (dyAcc <= -thresholdPx) {
+                                                if (pagerState.currentPage < chatWindows.size - 1) {
+                                                    scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                                                }
+                                                dyAcc = 0f
+                                                change.consume()
+                                            } else if (dyAcc >= thresholdPx) {
+                                                if (pagerState.currentPage > 0) {
+                                                    scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                                                }
+                                                dyAcc = 0f
+                                                change.consume()
                                             }
-                                            dyAcc = 0f
-                                            change.consume()
-                                        } else if (dyAcc >= thresholdPx) {
-                                            if (pagerState.currentPage > 0) {
-                                                scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                                            }
-                                            dyAcc = 0f
-                                            change.consume()
                                         }
-                                    }
-                                )
-                            }
-                    )
+                                    )
+                                }
+                        )
+                    }
 
                     // 已移除左滑呼出：仅保留顶部按钮打开，以及点击非侧栏区域关闭
                 }
@@ -825,8 +833,9 @@ fun MainScreen(
                 }
             }
 
-            // 页面左下角的悬浮英译按钮（不与输入框同容器，背后透明），受设置页开关控制
-            if (showTranslateFab == true) {
+            // 页面左下角的悬浮英译按钮（不与输入框同容器，背后透明），受设置页开关控制 + 输入为空隐藏
+            val showTranslateButton = showTranslateFab == true && getCurrentWindow()?.inputText?.isNotBlank() == true
+            if (showTranslateButton) {
                 SmallFloatingActionButton(
                     onClick = {
                         val source = getCurrentWindow()?.inputText?.trim().orEmpty()
@@ -839,7 +848,13 @@ fun MainScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(16.dp)
+                        .padding(16.dp),
+                    elevation = FloatingActionButtonDefaults.elevation(
+                        defaultElevation = 0.dp,
+                        pressedElevation = 0.dp,
+                        focusedElevation = 0.dp,
+                        hoveredElevation = 0.dp
+                    )
                 ) {
                     if (translateStreaming) {
                         LoadingIndicator(
