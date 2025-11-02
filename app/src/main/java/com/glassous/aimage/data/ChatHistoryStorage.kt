@@ -5,6 +5,8 @@ import com.glassous.aimage.ui.screens.HistoryItem
 import com.glassous.aimage.ui.screens.ModelGroupType
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 object ChatHistoryStorage {
     private const val PREF_NAME = "chat_history_prefs"
@@ -18,6 +20,17 @@ object ChatHistoryStorage {
             val v = this.optString(key, "")
             if (v.isBlank() || v.equals("null", ignoreCase = true)) null else v
         } else null
+    }
+
+    // 实时数据流，供界面订阅以自动刷新
+    private val _historyFlow = MutableStateFlow<List<HistoryItem>>(emptyList())
+    val historyFlow: StateFlow<List<HistoryItem>> = _historyFlow
+
+    private fun parseTimestampToMillis(ts: String): Long {
+        return try {
+            val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm")
+            fmt.parse(ts)?.time ?: 0L
+        } catch (_: Exception) { 0L }
     }
 
     fun loadAll(context: Context): MutableList<HistoryItem> {
@@ -44,7 +57,15 @@ object ChatHistoryStorage {
                     // 跳过有问题的条目，继续解析
                 }
             }
-            list
+            // 统一按时间降序（最新在上），时间缺失时按 id 降序兜底
+            val sorted = list.sortedWith(compareByDescending<HistoryItem> {
+                parseTimestampToMillis(it.timestamp)
+            }.thenByDescending {
+                it.id.toLongOrNull() ?: 0L
+            })
+            // 更新流以通知订阅者
+            _historyFlow.value = sorted
+            sorted.toMutableList()
         } catch (_: Exception) {
             mutableListOf()
         }
@@ -52,8 +73,14 @@ object ChatHistoryStorage {
 
     fun saveAll(context: Context, items: List<HistoryItem>) {
         try {
+            // 保存前统一排序为时间降序，保证界面与云端合并后的顺序一致
+            val sorted = items.sortedWith(compareByDescending<HistoryItem> {
+                parseTimestampToMillis(it.timestamp)
+            }.thenByDescending {
+                it.id.toLongOrNull() ?: 0L
+            })
             val arr = JSONArray()
-            items.forEach { h ->
+            sorted.forEach { h ->
                 val obj = JSONObject()
                 obj.put("id", h.id)
                 obj.put("prompt", h.prompt)
@@ -65,6 +92,8 @@ object ChatHistoryStorage {
                 arr.put(obj)
             }
             prefs(context).edit().putString(KEY_HISTORY, arr.toString()).apply()
+            // 更新流以通知订阅者
+            _historyFlow.value = sorted
         } catch (_: Exception) {
             // 忽略持久化异常，防止影响运行
         }

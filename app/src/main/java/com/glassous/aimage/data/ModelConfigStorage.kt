@@ -5,6 +5,8 @@ import com.glassous.aimage.ui.screens.ModelGroupType
 import com.glassous.aimage.ui.screens.UserModel
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 object ModelConfigStorage {
     private const val PREF_NAME = "model_config_prefs"
@@ -13,6 +15,10 @@ object ModelConfigStorage {
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+
+    // 全局版本流：每次配置变更自增，供界面订阅后重新读取本地数据
+    private val _versionFlow: MutableStateFlow<Long> = MutableStateFlow(0L)
+    val versionFlow: StateFlow<Long> = _versionFlow
 
     private fun keyApi(group: ModelGroupType) = "api_" + group.name
     private fun keyModels(group: ModelGroupType) = "models_" + group.name
@@ -23,6 +29,7 @@ object ModelConfigStorage {
 
     fun saveApiKey(context: Context, group: ModelGroupType, apiKey: String) {
         prefs(context).edit().putString(keyApi(group), apiKey).apply()
+        _versionFlow.value = _versionFlow.value + 1
     }
 
     fun loadModels(context: Context, group: ModelGroupType): MutableList<UserModel> {
@@ -56,6 +63,7 @@ object ModelConfigStorage {
             arr.put(obj)
         }
         prefs(context).edit().putString(keyModels(group), arr.toString()).apply()
+        _versionFlow.value = _versionFlow.value + 1
     }
 
     data class DefaultModelRef(val group: ModelGroupType, val modelName: String)
@@ -65,6 +73,7 @@ object ModelConfigStorage {
             .putString(KEY_DEFAULT_GROUP, group.name)
             .putString(KEY_DEFAULT_MODEL, modelName)
             .apply()
+        _versionFlow.value = _versionFlow.value + 1
     }
 
     fun loadDefaultModel(context: Context): DefaultModelRef? {
@@ -83,5 +92,6 @@ object ModelConfigStorage {
             .remove(KEY_DEFAULT_GROUP)
             .remove(KEY_DEFAULT_MODEL)
             .apply()
+        _versionFlow.value = _versionFlow.value + 1
     }
 }

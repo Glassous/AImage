@@ -1,6 +1,8 @@
 package com.glassous.aimage.oss
 
 import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 data class OssConfig(
     val regionId: String,
@@ -21,6 +23,10 @@ object OssConfigStorage {
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
+    // OSS 配置流：保存/清空时更新，界面可实时响应
+    private val _configFlow: MutableStateFlow<OssConfig?> = MutableStateFlow(null)
+    val configFlow: StateFlow<OssConfig?> = _configFlow
+
     fun save(context: Context, cfg: OssConfig) {
         prefs(context).edit()
             .putString(KEY_REGION, cfg.regionId)
@@ -29,6 +35,7 @@ object OssConfigStorage {
             .putString(KEY_AK, cfg.accessKeyId)
             .putString(KEY_SK, cfg.accessKeySecret)
             .apply()
+        _configFlow.value = cfg
     }
 
     fun load(context: Context): OssConfig? {
@@ -43,7 +50,15 @@ object OssConfigStorage {
 
     fun clear(context: Context) {
         prefs(context).edit().clear().apply()
+        _configFlow.value = null
     }
 
     fun isConfigured(context: Context): Boolean = load(context) != null
+
+    // 初始化流的值，避免第一次收集为 null 与实际不同步
+    fun ensureInitialized(context: Context) {
+        if (_configFlow.value == null) {
+            _configFlow.value = load(context)
+        }
+    }
 }

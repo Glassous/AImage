@@ -12,6 +12,7 @@ import com.glassous.aimage.SettingsActivity
 import kotlinx.coroutines.launch
 import com.glassous.aimage.data.ChatHistoryStorage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,6 +32,13 @@ fun AImageApp(
         val loaded = ChatHistoryStorage.loadAll(context)
         historyItems.clear()
         historyItems.addAll(loaded)
+    }
+
+    // 订阅历史记录流，确保云端下载或其他来源变更后侧边栏自动刷新
+    val historyFromFlow by ChatHistoryStorage.historyFlow.collectAsState(initial = emptyList())
+    LaunchedEffect(historyFromFlow) {
+        historyItems.clear()
+        historyItems.addAll(historyFromFlow)
     }
 
     // 处理返回键逻辑

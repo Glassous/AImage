@@ -14,6 +14,7 @@ import com.glassous.aimage.data.ModelConfigStorage
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 object OssSyncManager {
     private fun client(context: Context): OSSClient? {
@@ -46,6 +47,10 @@ object OssSyncManager {
 
     suspend fun downloadFromCloud(context: Context, onStep: (String) -> Unit = {}) {
         withContext(Dispatchers.IO) {
+            // 先同步模型配置（API Key、模型列表、默认模型）
+            onStep("正在同步模型配置…")
+            downloadModelConfig(context)
+
             onStep("正在下载云端缺失到本地…")
             downloadMissingToLocal(context)
             onStep("下载完成")
@@ -93,6 +98,52 @@ object OssSyncManager {
         c.putObject(put)
     }
 
+    private fun downloadModelConfig(context: Context) {
+        val c = client(context) ?: return
+        val b = bucket(context) ?: return
+        try {
+            val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, "model_configs.json")
+            val result = c.getObject(get)
+            val text = result.objectContent.bufferedReader().use { it.readText() }
+            val root = org.json.JSONObject(text)
+            val apiKeys = root.optJSONObject("apiKeys") ?: org.json.JSONObject()
+            val models = root.optJSONObject("models") ?: org.json.JSONObject()
+            // 保存 API Key 与模型列表
+            com.glassous.aimage.ui.screens.ModelGroupType.values().forEach { group ->
+                val key = apiKeys.optString(group.name, "")
+                com.glassous.aimage.data.ModelConfigStorage.saveApiKey(context, group, key)
+
+                val arr = models.optJSONArray(group.name) ?: org.json.JSONArray()
+                val list = mutableListOf<com.glassous.aimage.ui.screens.UserModel>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    list.add(
+                        com.glassous.aimage.ui.screens.UserModel(
+                            o.optString("name", ""),
+                            o.optString("displayName", ""),
+                            o.optString("note", "")
+                        )
+                    )
+                }
+                com.glassous.aimage.data.ModelConfigStorage.saveModels(context, group, list)
+            }
+            // 默认模型
+            val def = root.optJSONObject("default")
+            if (def != null) {
+                val g = def.optString("group", "")
+                val m = def.optString("modelName", "")
+                try {
+                    val group = com.glassous.aimage.ui.screens.ModelGroupType.valueOf(g)
+                    if (m.isNotBlank()) {
+                        com.glassous.aimage.data.ModelConfigStorage.saveDefaultModel(context, group, m)
+                    }
+                } catch (_: Exception) { /* ignore invalid group */ }
+            }
+        } catch (_: Exception) {
+            // 下载/解析失败时忽略，不影响历史下载
+        }
+    }
+
     fun syncHistory(context: Context) {
         val c = client(context) ?: return
         val b = bucket(context) ?: return
@@ -131,13 +182,16 @@ object OssSyncManager {
             uploadHistoryItem(context, c, b, item)
         }
 
-        // Download missing locally
-        toDownload.forEach { id ->
-            val item = downloadHistoryItem(c, b, id)
-            if (item != null) {
-                val merged = localHistory.toMutableList().apply { add(item) }
-                ChatHistoryStorage.saveAll(context, merged)
+        // Download missing locally（一次性合并保存，避免被覆盖只保留一条）
+        if (toDownload.isNotEmpty()) {
+            val merged = localHistory.toMutableList()
+            toDownload.forEach { id ->
+                val item = downloadHistoryItem(context, c, b, id)
+                if (item != null) {
+                    merged.add(item)
+                }
             }
+            ChatHistoryStorage.saveAll(context, merged)
         }
 
         // Update ID table on remote to reflect local union
@@ -195,16 +249,15 @@ object OssSyncManager {
         val localHistory = ChatHistoryStorage.loadAll(context)
         val localIds = localHistory.map { it.id }.toSet()
         val toDownload = remoteIds.minus(localIds)
-        var changed = false
-        toDownload.forEach { id ->
-            val item = downloadHistoryItem(c, b, id)
-            if (item != null) {
-                val merged = localHistory.toMutableList().apply { add(0, item) }
-                ChatHistoryStorage.saveAll(context, merged)
-                changed = true
+        if (toDownload.isNotEmpty()) {
+            val merged = localHistory.toMutableList()
+            toDownload.forEach { id ->
+                val item = downloadHistoryItem(context, c, b, id)
+                if (item != null) {
+                    merged.add(0, item)
+                }
             }
-        }
-        if (changed) {
+            ChatHistoryStorage.saveAll(context, merged)
             // 刷新远端ID表为 union（不强制、保持远端表）
             val unionIds = (localIds + remoteIds).toList()
             val idArr = JSONArray()
@@ -276,7 +329,7 @@ object OssSyncManager {
         c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, objKey, bytes))
     }
 
-    private fun downloadHistoryItem(c: OSSClient, b: String, id: String): HistoryItem? {
+    private fun downloadHistoryItem(context: Context, c: OSSClient, b: String, id: String): HistoryItem? {
         return try {
             val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, "history/$id.json")
             val result = c.getObject(get)
@@ -285,15 +338,24 @@ object OssSyncManager {
             val imgBase64 = o.optString("imageBase64", "")
             var imageUrl: String? = null
             if (imgBase64.isNotBlank()) {
-                // In a real app we would persist to local cache dir and reference path
-                imageUrl = null
+                try {
+                    // Decode and persist to local app files dir
+                    val imagesDir = File(context.filesDir, "images")
+                    if (!imagesDir.exists()) imagesDir.mkdirs()
+                    val imgBytes = Base64.decode(imgBase64, Base64.DEFAULT)
+                    val f = File(imagesDir, "$id.png")
+                    f.writeBytes(imgBytes)
+                    imageUrl = f.absolutePath
+                } catch (_: Exception) { /* ignore and keep imageUrl null */ }
+            } else {
+                // Fallback: try raw imageUrl if present
+                val rawUrl = o.optString("imageUrl", "")
+                imageUrl = if (rawUrl.isBlank() || rawUrl.equals("null", true)) null else rawUrl
             }
+
+            // Robust provider parsing compatible with local storage/backup
             val providerStr = o.optString("providerGroup", "")
-            val provider = try {
-                com.glassous.aimage.ui.screens.ModelGroupType.valueOf(providerStr)
-            } catch (_: Exception) {
-                com.glassous.aimage.ui.screens.ModelGroupType.Google
-            }
+            val provider = parseProviderCompat(providerStr)
             HistoryItem(
                 id = o.optString("id", id),
                 prompt = o.optString("prompt", ""),
@@ -304,6 +366,19 @@ object OssSyncManager {
             )
         } catch (_: Exception) {
             null
+        }
+    }
+
+    // 与本地解析保持一致的 provider 兼容逻辑
+    private fun parseProviderCompat(value: String?): com.glassous.aimage.ui.screens.ModelGroupType {
+        if (value.isNullOrBlank()) return com.glassous.aimage.ui.screens.ModelGroupType.Google
+        try { return com.glassous.aimage.ui.screens.ModelGroupType.valueOf(value) } catch (_: Exception) { }
+        val normalized = value.lowercase()
+        return when {
+            normalized.contains("gemini") || normalized.contains("google") -> com.glassous.aimage.ui.screens.ModelGroupType.Google
+            normalized.contains("doubao") || normalized.contains("豆包") || normalized.contains("volc") -> com.glassous.aimage.ui.screens.ModelGroupType.Doubao
+            normalized.contains("qwen") || normalized.contains("阿里") || normalized.contains("ali") -> com.glassous.aimage.ui.screens.ModelGroupType.Qwen
+            else -> com.glassous.aimage.ui.screens.ModelGroupType.Google
         }
     }
 }

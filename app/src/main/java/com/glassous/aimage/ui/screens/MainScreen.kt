@@ -243,6 +243,16 @@ fun MainScreen(
         }
     }
 
+    // 订阅模型配置版本流：任意配置变化后主界面可用模型与默认模型自动刷新
+    val configVersion by ModelConfigStorage.versionFlow.collectAsState(initial = 0L)
+    LaunchedEffect(configVersion) {
+        ModelGroupType.values().forEach { group ->
+            groupModels[group] = ModelConfigStorage.loadModels(context, group)
+        }
+        defaultRef = ModelConfigStorage.loadDefaultModel(context)
+        modelName = labelFor(currentRef ?: defaultRef)
+    }
+
     // 加载历史记录项
     LaunchedEffect(historyItemToLoad) {
         historyItemToLoad?.let { item ->
@@ -266,29 +276,24 @@ fun MainScreen(
                 lc.contains(model.displayName.lowercase()) || lc.contains(model.name.lowercase())
             } ?: models.firstOrNull()
             
-            if (targetModel != null) {
-                val targetModelRef = ModelConfigStorage.DefaultModelRef(targetGroup, targetModel.name)
+            // 无论是否找到匹配模型，都创建窗口显示历史内容
+            val targetModelRef = targetModel?.let { ModelConfigStorage.DefaultModelRef(targetGroup, it.name) }
+            val newWindow = ChatWindow(
+                modelRef = targetModelRef,
+                inputText = item.prompt,
+                responseText = "",
+                imageUrl = item.imageUrl,
+                lastGeneratedTimestamp = item.timestamp
+            )
+            chatWindows = listOf(newWindow)
+            scope.launch { pagerState.animateScrollToPage(0) }
 
-                // 始终创建新窗口加载历史（已在前面清空窗口）
-                val newWindow = ChatWindow(
-                    modelRef = targetModelRef,
-                    inputText = item.prompt,
-                    responseText = "",
-                    imageUrl = item.imageUrl,
-                    lastGeneratedTimestamp = item.timestamp
-                )
-                chatWindows = listOf(newWindow)
-                scope.launch {
-                    pagerState.animateScrollToPage(0)
-                }
-
-                // 更新全局状态以保持兼容性
-                currentRef = targetModelRef
-                modelName = labelFor(currentRef)
-                inputText = item.prompt
-                responseText = ""
-                imageUrl = item.imageUrl
-            }
+            // 更新全局状态以保持兼容性
+            currentRef = targetModelRef
+            modelName = labelFor(currentRef)
+            inputText = item.prompt
+            responseText = ""
+            imageUrl = item.imageUrl
         }
     }
 

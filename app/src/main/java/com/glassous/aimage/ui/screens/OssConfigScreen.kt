@@ -11,21 +11,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.LinearWavyProgressIndicator
+// 立即同步按钮已移除，进度提示不再在配置页使用
 import com.glassous.aimage.oss.OssConfig
 import com.glassous.aimage.oss.OssConfigStorage
 import com.glassous.aimage.oss.OssRegion
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OssConfigScreen(
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scope = rememberCoroutineScope()
-    var showDialog by remember { mutableStateOf(false) }
-    var progressText by remember { mutableStateOf("准备中…") }
     val context = LocalContext.current
     var selectedRegion by remember { mutableStateOf<OssRegion?>(null) }
     var endpoint by remember { mutableStateOf("") }
@@ -171,33 +168,9 @@ fun OssConfigScreen(
                         Text("保存配置")
                     }
 
-                    OutlinedButton(onClick = {
-                        showDialog = true
-                        progressText = "正在同步…"
-                        scope.launch {
-                            com.glassous.aimage.oss.OssSyncManager.syncAll(context) { step ->
-                                progressText = step
-                            }
-                            showDialog = false
-                        }
-                    }) {
-                        Text("立即同步")
-                    }
+                    // “立即同步”按钮已移除
                 }
             }
         }
-    }
-    if (showDialog) {
-        AlertDialog(
-            onDismissRequest = { /* 同步过程中不可关闭 */ },
-            confirmButton = {},
-            title = { Text("正在同步") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(progressText)
-                    LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-            }
-        )
     }
 }

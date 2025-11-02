@@ -37,6 +37,9 @@ data class SettingsItem(
     val onClick: () -> Unit
 )
 
+// 云端同步操作类型（上传/下载）
+private enum class CloudAction { Upload, Download }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -51,6 +54,15 @@ fun SettingsScreen(
     var showSelector by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
+        ModelGroupType.values().forEach { group ->
+            groupModels[group] = ModelConfigStorage.loadModels(context, group)
+        }
+        defaultRef = ModelConfigStorage.loadDefaultModel(context)
+    }
+
+    // 订阅模型配置版本流：任意模型配置/API Key/默认模型变动后，设置页自动刷新显示
+    val configVersion by ModelConfigStorage.versionFlow.collectAsState(initial = 0L)
+    LaunchedEffect(configVersion) {
         ModelGroupType.values().forEach { group ->
             groupModels[group] = ModelConfigStorage.loadModels(context, group)
         }
@@ -477,9 +489,18 @@ private fun BackupSettingCard(modifier: Modifier = Modifier) {
 private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var showDialog by remember { mutableStateOf(false) }
+    var showProgress by remember { mutableStateOf(false) }
     var progressText by remember { mutableStateOf("准备中…") }
-    val configured = com.glassous.aimage.oss.OssConfigStorage.isConfigured(context)
+    var showConfirm by remember { mutableStateOf(false) }
+    var showResult by remember { mutableStateOf(false) }
+    var resultTitle by remember { mutableStateOf("") }
+    var resultMessage by remember { mutableStateOf("") }
+    var isError by remember { mutableStateOf(false) }
+    var pendingAction by remember { mutableStateOf<CloudAction?>(null) }
+    // 订阅 OSS 配置流，按钮实时启用/禁用
+    com.glassous.aimage.oss.OssConfigStorage.ensureInitialized(context)
+    val ossCfgOrNull by com.glassous.aimage.oss.OssConfigStorage.configFlow.collectAsState(initial = com.glassous.aimage.oss.OssConfigStorage.load(context))
+    val configured = ossCfgOrNull != null
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -521,14 +542,8 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 FilledTonalButton(
                     onClick = {
-                        showDialog = true
-                        progressText = "正在上传…"
-                        scope.launch {
-                            com.glassous.aimage.oss.OssSyncManager.uploadToCloud(context) { step ->
-                                progressText = step
-                            }
-                            showDialog = false
-                        }
+                        pendingAction = CloudAction.Upload
+                        showConfirm = true
                     },
                     enabled = configured,
                     modifier = Modifier.weight(1f)
@@ -538,14 +553,8 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
 
                 FilledTonalButton(
                     onClick = {
-                        showDialog = true
-                        progressText = "正在下载…"
-                        scope.launch {
-                            com.glassous.aimage.oss.OssSyncManager.downloadFromCloud(context) { step ->
-                                progressText = step
-                            }
-                            showDialog = false
-                        }
+                        pendingAction = CloudAction.Download
+                        showConfirm = true
                     },
                     enabled = configured,
                     modifier = Modifier.weight(1f)
@@ -564,7 +573,7 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
         }
     }
 
-    if (showDialog) {
+    if (showProgress) {
         AlertDialog(
             onDismissRequest = { /* 同步过程中不可关闭 */ },
             confirmButton = {},
@@ -576,6 +585,67 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
                     Text(progressText)
                     LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
+            }
+        )
+    }
+
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text(if (pendingAction == CloudAction.Upload) "确认上传到云端" else "确认从云端下载") },
+            text = {
+                Text(if (pendingAction == CloudAction.Upload)
+                    "将上传本地模型配置与历史记录到云端。是否继续？"
+                    else "将从云端下载模型配置与历史记录并与本地合并。是否继续？")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConfirm = false
+                    showProgress = true
+                    progressText = if (pendingAction == CloudAction.Upload) "正在上传…" else "正在下载…"
+                    scope.launch {
+                        try {
+                            if (pendingAction == CloudAction.Upload) {
+                                com.glassous.aimage.oss.OssSyncManager.uploadToCloud(context) { step ->
+                                    progressText = step
+                                }
+                                resultTitle = "上传完成"
+                                resultMessage = "已成功上传到云端。"
+                                isError = false
+                            } else {
+                                com.glassous.aimage.oss.OssSyncManager.downloadFromCloud(context) { step ->
+                                    progressText = step
+                                }
+                                resultTitle = "下载完成"
+                                resultMessage = "已成功从云端下载。"
+                                isError = false
+                            }
+                        } catch (e: Exception) {
+                            resultTitle = if (pendingAction == CloudAction.Upload) "上传失败" else "下载失败"
+                            resultMessage = e.message ?: "发生未知错误"
+                            isError = true
+                        } finally {
+                            showProgress = false
+                            showResult = true
+                        }
+                    }
+                }) {
+                    Text("确认")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showResult) {
+        AlertDialog(
+            onDismissRequest = { showResult = false },
+            title = { Text(resultTitle) },
+            text = { Text(resultMessage) },
+            confirmButton = {
+                TextButton(onClick = { showResult = false }) { Text("好的") }
             }
         )
     }
