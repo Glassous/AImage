@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -319,11 +320,32 @@ fun MainScreen(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
-                title = { 
-                    Text(
-                        text = "AImage",
-                        fontWeight = FontWeight.Bold
-                    ) 
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "AImage",
+                            fontWeight = FontWeight.Bold
+                        )
+                        // 自动同步状态提示图标（仅自动触发时显示，成功为对勾，失败为叉号）
+                        val event by com.glassous.aimage.oss.AutoSyncNotifier.events.collectAsState(initial = null)
+                        var showIndicator by remember { mutableStateOf(false) }
+                        var lastSuccess by remember { mutableStateOf(true) }
+                        LaunchedEffect(event) {
+                            if (event != null) {
+                                lastSuccess = event!!.success
+                                showIndicator = true
+                                kotlinx.coroutines.delay(3000)
+                                showIndicator = false
+                            }
+                        }
+                        if (showIndicator) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = if (lastSuccess) Icons.Filled.Check else Icons.Filled.Close,
+                                contentDescription = if (lastSuccess) "自动同步成功" else "自动同步失败"
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onMenuClick) {

@@ -13,6 +13,10 @@ import kotlinx.coroutines.launch
 import com.glassous.aimage.data.ChatHistoryStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
+import com.glassous.aimage.oss.OssConfigStorage
+import com.glassous.aimage.oss.AutoSyncNotifier
+import com.glassous.aimage.oss.AutoSyncEvent
+import com.glassous.aimage.oss.AutoSyncType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,10 +32,45 @@ fun AImageApp(
     var newConversationToken by remember { mutableStateOf(0L) }
     // 独立图片预览改为 Activity 承载，不再使用内部状态切换
 
+    // 自动同步状态：订阅 OSS 配置与自动开关
+    OssConfigStorage.ensureInitialized(context)
+    val ossConfigured by OssConfigStorage.configFlow.collectAsState(initial = OssConfigStorage.load(context))
+    val autoSyncEnabled by OssConfigStorage.autoSyncFlow.collectAsState(initial = OssConfigStorage.isAutoSyncEnabled(context))
+    val configVersion by com.glassous.aimage.data.ModelConfigStorage.versionFlow.collectAsState(initial = 0L)
+    var lastConfigVersionAfterStartup by remember { mutableStateOf<Long?>(null) }
+
     LaunchedEffect(Unit) {
         val loaded = ChatHistoryStorage.loadAll(context)
         historyItems.clear()
         historyItems.addAll(loaded)
+    }
+
+    // 进入应用时自动从云端下载（一次），需已配置且开关开启
+    LaunchedEffect(ossConfigured, autoSyncEnabled) {
+        if (ossConfigured != null && autoSyncEnabled) {
+            try {
+                com.glassous.aimage.oss.OssSyncManager.downloadFromCloud(context) { /* step ignored */ }
+                lastConfigVersionAfterStartup = configVersion
+                AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.DownloadOnStart, true))
+            } catch (e: Exception) {
+                AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.DownloadOnStart, false))
+            }
+        }
+    }
+
+    // 模型配置或默认模型变更时，自动上传（仅模型配置文件）
+    LaunchedEffect(configVersion, ossConfigured, autoSyncEnabled) {
+        if (ossConfigured != null && autoSyncEnabled) {
+            val skipDueToStartup = lastConfigVersionAfterStartup != null && configVersion <= lastConfigVersionAfterStartup!!
+            if (!skipDueToStartup) {
+                try {
+                    com.glassous.aimage.oss.OssSyncManager.syncModelConfig(context)
+                    AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.UploadModelConfig, true))
+                } catch (e: Exception) {
+                    AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.UploadModelConfig, false))
+                }
+            }
+        }
     }
 
     // 订阅历史记录流，确保云端下载或其他来源变更后侧边栏自动刷新
@@ -82,9 +121,16 @@ fun AImageApp(
                     historyItems.removeAll { it.id == historyItem.id }
                     activeHistoryIds.remove(historyItem.id)
                     ChatHistoryStorage.saveAll(context, historyItems.toList())
-                    // 云端同步：删除后更新远端ID表并移除对应文件（后台线程防卡顿）
-                    scope.launch(Dispatchers.IO) {
-                        com.glassous.aimage.oss.OssSyncManager.onHistoryDeleted(context, historyItem.id)
+                    // 云端自动同步开启时：删除后更新远端ID表并移除对应文件（后台线程防卡顿）
+                    if (ossConfigured != null && autoSyncEnabled) {
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                com.glassous.aimage.oss.OssSyncManager.onHistoryDeleted(context, historyItem.id)
+                                AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.UploadHistoryDelete, true))
+                            } catch (e: Exception) {
+                                AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.UploadHistoryDelete, false))
+                            }
+                        }
                     }
                 },
                 activeHistoryIds = activeHistoryIds,
@@ -107,9 +153,16 @@ fun AImageApp(
                     historyItems.add(0, item)
                     // 使用快照副本避免潜在的并发修改问题
                     ChatHistoryStorage.saveAll(context, historyItems.toList())
-                    // 云端同步：新增条目后上传并更新ID表（后台线程防卡顿）
-                    scope.launch(Dispatchers.IO) {
-                        com.glassous.aimage.oss.OssSyncManager.onHistoryAdded(context, item)
+                    // 云端自动同步开启时：新增条目后上传并更新ID表（后台线程防卡顿）
+                    if (ossConfigured != null && autoSyncEnabled) {
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                com.glassous.aimage.oss.OssSyncManager.onHistoryAdded(context, item)
+                                AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.UploadHistoryAdd, true))
+                            } catch (e: Exception) {
+                                AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.UploadHistoryAdd, false))
+                            }
+                        }
                     }
                 },
                 onImageClick = { url ->

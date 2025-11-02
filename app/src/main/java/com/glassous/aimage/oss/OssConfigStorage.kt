@@ -19,6 +19,7 @@ object OssConfigStorage {
     private const val KEY_BUCKET = "bucket"
     private const val KEY_AK = "access_key_id"
     private const val KEY_SK = "access_key_secret"
+    private const val KEY_AUTO_SYNC = "auto_sync_enabled"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -26,6 +27,10 @@ object OssConfigStorage {
     // OSS 配置流：保存/清空时更新，界面可实时响应
     private val _configFlow: MutableStateFlow<OssConfig?> = MutableStateFlow(null)
     val configFlow: StateFlow<OssConfig?> = _configFlow
+
+    // 自动同步开关流：开关变化时更新，界面可实时响应
+    private val _autoSyncFlow: MutableStateFlow<Boolean> = MutableStateFlow(false)
+    val autoSyncFlow: StateFlow<Boolean> = _autoSyncFlow
 
     fun save(context: Context, cfg: OssConfig) {
         prefs(context).edit()
@@ -60,5 +65,14 @@ object OssConfigStorage {
         if (_configFlow.value == null) {
             _configFlow.value = load(context)
         }
+        _autoSyncFlow.value = isAutoSyncEnabled(context)
     }
+
+    fun setAutoSyncEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_AUTO_SYNC, enabled).apply()
+        _autoSyncFlow.value = enabled
+    }
+
+    fun isAutoSyncEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_AUTO_SYNC, false)
 }

@@ -10,6 +10,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -92,6 +94,26 @@ fun SettingsScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "返回"
+                        )
+                    }
+                },
+                actions = {
+                    // 自动同步状态提示图标（仅自动触发时显示，成功为对勾，失败为叉号）
+                    val event by com.glassous.aimage.oss.AutoSyncNotifier.events.collectAsState(initial = null)
+                    var showIndicator by remember { mutableStateOf(false) }
+                    var lastSuccess by remember { mutableStateOf(true) }
+                    LaunchedEffect(event) {
+                        if (event != null) {
+                            lastSuccess = event!!.success
+                            showIndicator = true
+                            kotlinx.coroutines.delay(3000)
+                            showIndicator = false
+                        }
+                    }
+                    if (showIndicator) {
+                        Icon(
+                            imageVector = if (lastSuccess) Icons.Filled.Check else Icons.Filled.Close,
+                            contentDescription = if (lastSuccess) "自动同步成功" else "自动同步失败"
                         )
                     }
                 },
@@ -536,6 +558,27 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
                 ) {
                     Text("配置OSS")
                 }
+            }
+
+            // 中间行：自动同步开关（居中显示）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 订阅自动同步开关
+                com.glassous.aimage.oss.OssConfigStorage.ensureInitialized(context)
+                val autoSyncEnabled by com.glassous.aimage.oss.OssConfigStorage.autoSyncFlow.collectAsState(
+                    initial = com.glassous.aimage.oss.OssConfigStorage.isAutoSyncEnabled(context)
+                )
+                Text("自动同步")
+                Spacer(modifier = Modifier.width(8.dp))
+                Switch(
+                    checked = autoSyncEnabled,
+                    onCheckedChange = { enabled ->
+                        com.glassous.aimage.oss.OssConfigStorage.setAutoSyncEnabled(context, enabled)
+                    }
+                )
             }
 
             // 第二行：上传/下载各占一半
