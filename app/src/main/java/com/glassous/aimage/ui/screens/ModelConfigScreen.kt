@@ -32,13 +32,15 @@ data class UserModel(
 enum class ModelGroupType(val displayName: String, val website: String) {
     Google("Gemini", "https://aistudio.google.com/api-keys"),
     Doubao("豆包", "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey"),
-    Qwen("Qwen", "https://bailian.console.aliyun.com/?tab=app#/api-key")
+    Qwen("Qwen", "https://bailian.console.aliyun.com/?tab=app#/api-key"),
+    MiniMax("MiniMax", "https://platform.minimaxi.com/#/developer")
 }
 
 private fun ModelGroupType.logoRes(): Int = when (this) {
     ModelGroupType.Google -> R.drawable.gemini
     ModelGroupType.Doubao -> R.drawable.doubao
     ModelGroupType.Qwen -> R.drawable.qwen
+    ModelGroupType.MiniMax -> R.drawable.minimax
 }
 
 class ModelGroupConfig(
@@ -62,6 +64,10 @@ private fun defaultPresetsFor(group: ModelGroupType): List<UserModel> = when (gr
         UserModel(name = "qwen-image", displayName = "qwen-image", note = ""),
         UserModel(name = "wan2.5-t2i-preview", displayName = "wan2.5-t2i-preview", note = ""),
     )
+    ModelGroupType.MiniMax -> listOf(
+        UserModel(name = "image-01-live", displayName = "image-01-live", note = ""),
+        UserModel(name = "image-01", displayName = "image-01", note = "")
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,7 +80,8 @@ fun ModelConfigScreen(
         mutableStateMapOf(
             ModelGroupType.Google to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf()),
             ModelGroupType.Doubao to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf()),
-            ModelGroupType.Qwen to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf())
+            ModelGroupType.Qwen to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf()),
+            ModelGroupType.MiniMax to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf())
         )
     }
 

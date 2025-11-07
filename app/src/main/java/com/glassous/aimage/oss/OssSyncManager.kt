@@ -35,6 +35,48 @@ object OssSyncManager {
         }
     }
 
+    // 兼容解析远端历史索引（允许旧版仅ID数组或新版对象数组{id, prompt}）
+    private fun parseRemoteHistoryIndex(raw: String?): Map<String, String> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return try {
+            val arr = JSONArray(raw)
+            val map = mutableMapOf<String, String>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i)
+                if (obj != null) {
+                    val id = obj.optString("id", "")
+                    val prompt = obj.optString("prompt", "")
+                    if (id.isNotBlank()) map[id] = prompt
+                } else {
+                    val idStr = arr.optString(i, "")
+                    if (idStr.isNotBlank()) map[idStr] = "" // 旧格式下无提示词
+                }
+            }
+            map
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    // 将索引写为{id, prompt}对象数组
+    private fun buildHistoryIndexBytes(index: Map<String, String>): ByteArray {
+        val arr = JSONArray()
+        index.forEach { (id, prompt) ->
+            val o = JSONObject()
+            o.put("id", id)
+            o.put("prompt", prompt)
+            arr.put(o)
+        }
+        return arr.toString().toByteArray()
+    }
+
+    // 合并索引：以远端为基础，用本地提示词覆盖同ID项，并补充本地新增ID
+    private fun unionIndex(local: List<com.glassous.aimage.ui.screens.HistoryItem>, remote: Map<String, String>): Map<String, String> {
+        val result = remote.toMutableMap()
+        local.forEach { h -> result[h.id] = h.prompt }
+        return result
+    }
+
     suspend fun uploadToCloud(context: Context, onStep: (String) -> Unit = {}) {
         withContext(Dispatchers.IO) {
             onStep("正在上传模型配置…")
@@ -144,6 +186,44 @@ object OssSyncManager {
         }
     }
 
+    // 提供仅下载模型配置的异步入口（不阻塞UI）
+    suspend fun downloadModelConfigAsync(context: Context) {
+        withContext(Dispatchers.IO) {
+            downloadModelConfig(context)
+        }
+    }
+
+    // 增量下载缺失的历史记录（不更新远端 union 索引，避免启动时阻塞与不必要写入）
+    suspend fun downloadMissingHistoryIncremental(context: Context) {
+        withContext(Dispatchers.IO) {
+            val c = client(context) ?: return@withContext
+            val b = bucket(context) ?: return@withContext
+            val idTableKey = "history_ids.json"
+            val idsRemote = try {
+                val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, idTableKey)
+                val result = c.getObject(get)
+                result.objectContent.bufferedReader().use { it.readText() }
+            } catch (e: Exception) { null }
+            val remoteIndex = parseRemoteHistoryIndex(idsRemote)
+            val remoteIds = remoteIndex.keys.toSet()
+            val localHistory = ChatHistoryStorage.loadAll(context)
+            val localIds = localHistory.map { it.id }.toSet()
+            val toDownload = remoteIds.minus(localIds)
+            if (toDownload.isNotEmpty()) {
+                toDownload.forEach { id ->
+                    val item = downloadHistoryItem(context, c, b, id)
+                    if (item != null) {
+                        try {
+                            val current = ChatHistoryStorage.loadAll(context)
+                            current.add(0, item)
+                            ChatHistoryStorage.saveAll(context, current)
+                        } catch (_: Exception) { /* ignore individual failures */ }
+                    }
+                }
+            }
+        }
+    }
+
     fun syncHistory(context: Context) {
         val c = client(context) ?: return
         val b = bucket(context) ?: return
@@ -162,16 +242,9 @@ object OssSyncManager {
         val localHistory = ChatHistoryStorage.loadAll(context)
         val localIds = localHistory.map { it.id }.toSet()
 
-        // Parse remote IDs
-        val remoteIds = mutableSetOf<String>()
-        if (idsRemote != null) {
-            try {
-                val arr = JSONArray(idsRemote)
-                for (i in 0 until arr.length()) {
-                    remoteIds.add(arr.getString(i))
-                }
-            } catch (_: Exception) { }
-        }
+        // Parse remote index (id -> prompt)
+        val remoteIndex = parseRemoteHistoryIndex(idsRemote)
+        val remoteIds = remoteIndex.keys.toSet()
 
         // Determine uploads and downloads
         val toUpload = localIds.minus(remoteIds)
@@ -194,12 +267,9 @@ object OssSyncManager {
             ChatHistoryStorage.saveAll(context, merged)
         }
 
-        // Update ID table on remote to reflect local union
-        val unionIds = (localIds + remoteIds).toList()
-        val idArr = JSONArray()
-        unionIds.forEach { idArr.put(it) }
-        val idBytes = idArr.toString().toByteArray()
-        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, idBytes))
+        // Update index table on remote to reflect local union (id+prompt)
+        val union = unionIndex(localHistory, remoteIndex)
+        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, buildHistoryIndexBytes(union)))
     }
 
     private fun uploadMissingToRemote(context: Context) {
@@ -211,23 +281,16 @@ object OssSyncManager {
             val result = c.getObject(get)
             result.objectContent.bufferedReader().use { it.readText() }
         } catch (e: Exception) { null }
-        val remoteIds = mutableSetOf<String>()
-        if (idsRemote != null) {
-            try {
-                val arr = JSONArray(idsRemote)
-                for (i in 0 until arr.length()) remoteIds.add(arr.getString(i))
-            } catch (_: Exception) {}
-        }
+        val remoteIndex = parseRemoteHistoryIndex(idsRemote)
+        val remoteIds = remoteIndex.keys.toSet()
         val localHistory = ChatHistoryStorage.loadAll(context)
         val localIds = localHistory.map { it.id }.toSet()
         val toUpload = localIds.minus(remoteIds)
         localHistory.filter { toUpload.contains(it.id) }.forEach { item ->
             uploadHistoryItem(context, c, b, item)
         }
-        val unionIds = (localIds + remoteIds).toList()
-        val idArr = JSONArray()
-        unionIds.forEach { idArr.put(it) }
-        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, idArr.toString().toByteArray()))
+        val union = unionIndex(localHistory, remoteIndex)
+        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, buildHistoryIndexBytes(union)))
     }
 
     private fun downloadMissingToLocal(context: Context) {
@@ -239,13 +302,8 @@ object OssSyncManager {
             val result = c.getObject(get)
             result.objectContent.bufferedReader().use { it.readText() }
         } catch (e: Exception) { null }
-        val remoteIds = mutableSetOf<String>()
-        if (idsRemote != null) {
-            try {
-                val arr = JSONArray(idsRemote)
-                for (i in 0 until arr.length()) remoteIds.add(arr.getString(i))
-            } catch (_: Exception) {}
-        }
+        val remoteIndex = parseRemoteHistoryIndex(idsRemote)
+        val remoteIds = remoteIndex.keys.toSet()
         val localHistory = ChatHistoryStorage.loadAll(context)
         val localIds = localHistory.map { it.id }.toSet()
         val toDownload = remoteIds.minus(localIds)
@@ -258,11 +316,9 @@ object OssSyncManager {
                 }
             }
             ChatHistoryStorage.saveAll(context, merged)
-            // 刷新远端ID表为 union（不强制、保持远端表）
-            val unionIds = (localIds + remoteIds).toList()
-            val idArr = JSONArray()
-            unionIds.forEach { idArr.put(it) }
-            c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, idArr.toString().toByteArray()))
+            // 刷新远端索引为 union（id+prompt），不强制覆盖
+            val union = unionIndex(merged, remoteIndex)
+            c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, buildHistoryIndexBytes(union)))
         }
     }
 
@@ -270,21 +326,19 @@ object OssSyncManager {
         val c = client(context) ?: return
         val b = bucket(context) ?: return
         uploadHistoryItem(context, c, b, item)
-        // Update ID table
-        val localIds = ChatHistoryStorage.loadAll(context).map { it.id }
-        val arr = JSONArray()
-        localIds.forEach { arr.put(it) }
-        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, "history_ids.json", arr.toString().toByteArray()))
+        // Update index table (id+prompt)
+        val local = ChatHistoryStorage.loadAll(context)
+        val index = local.associate { it.id to it.prompt }
+        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, "history_ids.json", buildHistoryIndexBytes(index)))
     }
 
     fun onHistoryDeleted(context: Context, deletedId: String) {
         val c = client(context) ?: return
         val b = bucket(context) ?: return
-        // Regenerate ID table from local
-        val localIds = ChatHistoryStorage.loadAll(context).map { it.id }
-        val arr = JSONArray()
-        localIds.forEach { arr.put(it) }
-        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, "history_ids.json", arr.toString().toByteArray()))
+        // Regenerate index table from local (id+prompt)
+        val local = ChatHistoryStorage.loadAll(context)
+        val index = local.associate { it.id to it.prompt }
+        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, "history_ids.json", buildHistoryIndexBytes(index)))
         // 删除对应的远端独立记录文件
         try {
             c.deleteObject(com.alibaba.sdk.android.oss.model.DeleteObjectRequest(b, "history/$deletedId.json"))
@@ -295,11 +349,10 @@ object OssSyncManager {
         val c = client(context) ?: return
         val b = bucket(context) ?: return
         uploadHistoryItem(context, c, b, item)
-        // 刷新ID表
-        val localIds = ChatHistoryStorage.loadAll(context).map { it.id }
-        val arr = JSONArray()
-        localIds.forEach { arr.put(it) }
-        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, "history_ids.json", arr.toString().toByteArray()))
+        // 刷新索引表（id+prompt）
+        val local = ChatHistoryStorage.loadAll(context)
+        val index = local.associate { it.id to it.prompt }
+        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, "history_ids.json", buildHistoryIndexBytes(index)))
     }
 
     private fun uploadHistoryItem(context: Context, c: OSSClient, b: String, item: HistoryItem) {
@@ -378,6 +431,7 @@ object OssSyncManager {
             normalized.contains("gemini") || normalized.contains("google") -> com.glassous.aimage.ui.screens.ModelGroupType.Google
             normalized.contains("doubao") || normalized.contains("豆包") || normalized.contains("volc") -> com.glassous.aimage.ui.screens.ModelGroupType.Doubao
             normalized.contains("qwen") || normalized.contains("阿里") || normalized.contains("ali") -> com.glassous.aimage.ui.screens.ModelGroupType.Qwen
+            normalized.contains("minimax") -> com.glassous.aimage.ui.screens.ModelGroupType.MiniMax
             else -> com.glassous.aimage.ui.screens.ModelGroupType.Google
         }
     }

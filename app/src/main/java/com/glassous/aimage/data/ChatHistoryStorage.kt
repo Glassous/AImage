@@ -111,6 +111,7 @@ object ChatHistoryStorage {
             normalized.contains("gemini") || normalized.contains("google") -> ModelGroupType.Google
             normalized.contains("doubao") || normalized.contains("豆包") || normalized.contains("volc") -> ModelGroupType.Doubao
             normalized.contains("qwen") || normalized.contains("阿里") || normalized.contains("ali") -> ModelGroupType.Qwen
+            normalized.contains("minimax") -> ModelGroupType.MiniMax
             else -> ModelGroupType.Google
         }
     }

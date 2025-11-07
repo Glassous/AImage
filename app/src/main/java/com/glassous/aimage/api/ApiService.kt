@@ -31,6 +31,11 @@ object ApiService {
             "https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=600&h=400",
             "https://images.unsplash.com/photo-1501436513145-30f24e19fcc4?w=600&h=400",
             "https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=600&h=400"
+        ),
+        ModelGroupType.MiniMax to listOf(
+            "https://images.unsplash.com/photo-1529243856184-fd1e3c2e0c08?w=600&h=400",
+            "https://images.unsplash.com/photo-1496317556649-f930d733eea0?w=600&h=400",
+            "https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=600&h=400"
         )
     )
     
@@ -38,14 +43,16 @@ object ApiService {
     private val apiDelays = mapOf(
         ModelGroupType.Google to 1500L..2500L,
         ModelGroupType.Doubao to 2000L..3000L,
-        ModelGroupType.Qwen to 1800L..2800L
+        ModelGroupType.Qwen to 1800L..2800L,
+        ModelGroupType.MiniMax to 1600L..2600L
     )
     
     // 不同厂商的成功率（模拟网络不稳定）
     private val successRates = mapOf(
         ModelGroupType.Google to 0.95,
         ModelGroupType.Doubao to 0.90,
-        ModelGroupType.Qwen to 0.92
+        ModelGroupType.Qwen to 0.92,
+        ModelGroupType.MiniMax to 0.93
     )
     
     /**
@@ -76,6 +83,13 @@ object ApiService {
             ModelGroupType.Qwen -> {
                 if (context != null) {
                     generateImageWithQwen(context, modelName, prompt, aspectRatio)
+                } else {
+                    generateImageMock(provider, modelName, prompt)
+                }
+            }
+            ModelGroupType.MiniMax -> {
+                if (context != null) {
+                    generateImageWithMiniMax(context, modelName, prompt, aspectRatio)
                 } else {
                     generateImageMock(provider, modelName, prompt)
                 }
@@ -280,6 +294,253 @@ object ApiService {
         } catch (_: Exception) {
             // 兜底返回原始错误体
             "HTTP ${code}: ${msg}\n${raw}"
+        }
+    }
+
+    // -------- MiniMax 文生图 --------
+    private suspend fun generateImageWithMiniMax(
+        context: Context,
+        modelName: String,
+        prompt: String,
+        aspectRatio: String
+    ): ApiResponse {
+        return try {
+            var apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.MiniMax).trim()
+            // 清洗：去左右引号与重复的 "Bearer " 前缀
+            apiKey = apiKey.trim('"').trim('\'')
+            apiKey = apiKey.replace(Regex("(?i)^Bearer\\s+"), "").trim()
+            if (apiKey.isEmpty()) {
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = "请先在设置中配置 MiniMax API 密钥"
+                )
+            }
+
+            val request = MiniMaxT2IRequest(
+                model = modelName,
+                prompt = prompt,
+                aspect_ratio = aspectRatio,
+                response_format = "base64",
+                n = 1,
+                prompt_optimizer = false,
+                aigc_watermark = false
+            )
+
+            // 首先尝试国内主机（api.minimax.chat）；如读超时则回退到全球主机
+            val responseCn: retrofit2.Response<com.google.gson.JsonObject>? = try {
+                RetrofitClient.minimaxApiServiceCn.generateImage(
+                    authorization = "Bearer ${apiKey}",
+                    request = request
+                )
+            } catch (toe: java.net.SocketTimeoutException) {
+                null
+            }
+
+            if (responseCn != null && responseCn.isSuccessful) {
+                val body = responseCn.body()
+                // 依据官方文档解析 data.image_urls（response_format=url）
+                // 参考: https://platform.minimax.io/docs/api-reference/image-generation-i2i
+                val dataObj = try { body?.getAsJsonObject("data") } catch (_: Exception) { null }
+
+                val urlFromData = try {
+                    val arr = dataObj?.getAsJsonArray("image_urls")
+                    if (arr != null && arr.size() > 0) arr.get(0).asString else dataObj?.get("image_url")?.asString
+                } catch (_: Exception) { null }
+
+                val urlFromTopLevel = try {
+                    val arr = body?.getAsJsonArray("image_urls") ?: body?.getAsJsonArray("images")
+                    if (arr != null && arr.size() > 0) arr.get(0).asString else null
+                } catch (_: Exception) { null }
+
+                val finalUrl = urlFromData ?: urlFromTopLevel
+
+                if (!finalUrl.isNullOrBlank()) {
+                    val saved = saveImageToAppDataFromUrl(context, finalUrl, suggestedExt = "jpg")
+                    return ApiResponse(
+                        imageUrl = saved,
+                        responseText = generateResponseText(ModelGroupType.MiniMax, modelName, prompt),
+                        success = true
+                    )
+                }
+
+                // 尝试 Base64（response_format=base64）
+                val base64FromData = try {
+                    val arr = dataObj?.getAsJsonArray("image_base64") ?: dataObj?.getAsJsonArray("images_base64")
+                    if (arr != null && arr.size() > 0) arr.get(0).asString else null
+                } catch (_: Exception) { null }
+
+                val base64Other = try {
+                    val dataArr = body?.getAsJsonArray("data")
+                    val firstData = if (dataArr != null && dataArr.size() > 0) dataArr.get(0).asJsonObject else null
+                    firstData?.get("b64_json")?.asString ?: firstData?.get("b64_img")?.asString
+                } catch (_: Exception) { null }
+
+                val base64 = base64FromData ?: base64Other
+
+                if (!base64.isNullOrBlank()) {
+                    return try {
+                        val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+                        val saved = saveImageToAppDataFromBytes(context, bytes, suggestedExt = "png")
+                        ApiResponse(
+                            imageUrl = saved,
+                            responseText = generateResponseText(ModelGroupType.MiniMax, modelName, prompt),
+                            success = true
+                        )
+                    } catch (e: Exception) {
+                        ApiResponse(
+                            imageUrl = "",
+                            responseText = "",
+                            success = false,
+                            errorMessage = "解析图片数据失败：${e.message}"
+                        )
+                    }
+                }
+
+                // 错误详情
+                val statusCode = try { body?.getAsJsonObject("base_resp")?.get("status_code")?.asInt } catch (_: Exception) { null }
+                val statusMsg = try { body?.getAsJsonObject("base_resp")?.get("status_msg")?.asString } catch (_: Exception) { null }
+                val errCn = if (statusCode != null && statusCode != 0) {
+                    // 附加授权信息（脱敏）以便排查
+                    val masked = try {
+                        val shownPrefix = apiKey.take(6)
+                        val shownSuffix = apiKey.takeLast(4)
+                        "${shownPrefix}...${shownSuffix}"
+                    } catch (_: Exception) { "(mask failed)" }
+                    val extra = if ((statusMsg ?: "").contains("invalid api key", ignoreCase = true)) {
+                        "；Authorization 已发送：Bearer ${masked}（长度=${apiKey.length}）"
+                    } else ""
+                    "MiniMax 返回错误：status_code=${statusCode}, status_msg=${statusMsg ?: ""}${extra}"
+                } else {
+                    "API返回了空的响应数据"
+                }
+                // 如果是鉴权错误（2049/invalid api key），尝试全球主机
+                val shouldFallback = (statusCode == 2049) || ((statusMsg ?: "").contains("invalid api key", ignoreCase = true))
+                if (!shouldFallback) {
+                    return ApiResponse(
+                        imageUrl = "",
+                        responseText = "",
+                        success = false,
+                        errorMessage = errCn
+                    )
+                }
+            } else if (responseCn != null) {
+                // HTTP 失败：401/403 也尝试主机回退
+                val httpCode = responseCn.code()
+                val detail = buildHttpErrorDetail(responseCn)
+                val shouldFallback = httpCode == 401 || httpCode == 403
+                if (!shouldFallback) {
+                    return ApiResponse(
+                        imageUrl = "",
+                        responseText = detail,
+                        success = false,
+                        errorMessage = detail
+                    )
+                }
+            } // else: 国内主机直接读超时，走全球主机
+
+            // 回退到全球主机（api.minimaxi.com）；如果国内直接超时，无需等待鉴权判断
+            val responseGlobal: retrofit2.Response<com.google.gson.JsonObject> = try {
+                RetrofitClient.minimaxApiServiceGlobal.generateImage(
+                    authorization = "Bearer ${apiKey}",
+                    request = request
+                )
+            } catch (toe: java.net.SocketTimeoutException) {
+                // 全球也超时，返回统一错误
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = "网络请求异常：timeout（国内与全球主机均超时）"
+                )
+            }
+
+            if (responseGlobal.isSuccessful) {
+                val body = responseGlobal.body()
+                val dataObj = try { body?.getAsJsonObject("data") } catch (_: Exception) { null }
+
+                val urlFromData = try {
+                    val arr = dataObj?.getAsJsonArray("image_urls")
+                    if (arr != null && arr.size() > 0) arr.get(0).asString else dataObj?.get("image_url")?.asString
+                } catch (_: Exception) { null }
+
+                val urlFromTopLevel = try {
+                    val arr = body?.getAsJsonArray("image_urls") ?: body?.getAsJsonArray("images")
+                    if (arr != null && arr.size() > 0) arr.get(0).asString else null
+                } catch (_: Exception) { null }
+
+                val finalUrl = urlFromData ?: urlFromTopLevel
+
+                if (!finalUrl.isNullOrBlank()) {
+                    val saved = saveImageToAppDataFromUrl(context, finalUrl, suggestedExt = "jpg")
+                    return ApiResponse(
+                        imageUrl = saved,
+                        responseText = generateResponseText(ModelGroupType.MiniMax, modelName, prompt),
+                        success = true
+                    )
+                }
+
+                val base64FromData = try {
+                    val arr = dataObj?.getAsJsonArray("image_base64") ?: dataObj?.getAsJsonArray("images_base64")
+                    if (arr != null && arr.size() > 0) arr.get(0).asString else null
+                } catch (_: Exception) { null }
+
+                val base64FromTopLevel = try {
+                    val arr = body?.getAsJsonArray("images_base64") ?: body?.getAsJsonArray("image_base64")
+                    if (arr != null && arr.size() > 0) arr.get(0).asString else null
+                } catch (_: Exception) { null }
+
+                val b64 = base64FromData ?: base64FromTopLevel
+                if (!b64.isNullOrBlank()) {
+                    return try {
+                        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                        val saved = saveImageToAppDataFromBytes(context, bytes, suggestedExt = "png")
+                        ApiResponse(
+                            imageUrl = saved,
+                            responseText = generateResponseText(ModelGroupType.MiniMax, modelName, prompt),
+                            success = true
+                        )
+                    } catch (e: Exception) {
+                        ApiResponse(
+                            imageUrl = "",
+                            responseText = "",
+                            success = false,
+                            errorMessage = "解析图片数据失败：${e.message}"
+                        )
+                    }
+                }
+
+                val statusCode = try { body?.getAsJsonObject("base_resp")?.get("status_code")?.asInt } catch (_: Exception) { null }
+                val statusMsg = try { body?.getAsJsonObject("base_resp")?.get("status_msg")?.asString } catch (_: Exception) { null }
+                val err = if (statusCode != null && statusCode != 0) {
+                    "MiniMax 返回错误（全球主机）：status_code=${statusCode}, status_msg=${statusMsg ?: ""}"
+                } else {
+                    "API返回了空的响应数据"
+                }
+
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = err
+                )
+            } else {
+                val detail = buildHttpErrorDetail(responseGlobal)
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = detail,
+                    success = false,
+                    errorMessage = detail
+                )
+            }
+        } catch (e: Exception) {
+            ApiResponse(
+                imageUrl = "",
+                responseText = "",
+                success = false,
+                errorMessage = "网络请求异常：${e.message}"
+            )
         }
     }
 
@@ -730,6 +991,7 @@ object ApiService {
             ModelGroupType.Google -> "Gemini"
             ModelGroupType.Doubao -> "豆包"
             ModelGroupType.Qwen -> "通义千问"
+            ModelGroupType.MiniMax -> "MiniMax"
         }
         
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())
@@ -746,6 +1008,7 @@ object ApiService {
             ModelGroupType.Google -> Random.nextDouble() > 0.05 // 95% 可用率
             ModelGroupType.Doubao -> Random.nextDouble() > 0.08 // 92% 可用率
             ModelGroupType.Qwen -> Random.nextDouble() > 0.06   // 94% 可用率
+            ModelGroupType.MiniMax -> Random.nextDouble() > 0.07 // 93% 可用率
         }
     }
 }

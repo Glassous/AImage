@@ -48,12 +48,23 @@ fun AImageApp(
     // 进入应用时自动从云端下载（一次），需已配置且开关开启
     LaunchedEffect(ossConfigured, autoSyncEnabled) {
         if (ossConfigured != null && autoSyncEnabled) {
-            try {
-                com.glassous.aimage.oss.OssSyncManager.downloadFromCloud(context) { /* step ignored */ }
-                lastConfigVersionAfterStartup = configVersion
-                AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.DownloadOnStart, true))
-            } catch (e: Exception) {
-                AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.DownloadOnStart, false))
+            // 优先使用本地：此处不阻塞UI，只启动后台任务
+            lastConfigVersionAfterStartup = configVersion
+            // 异步下载模型配置（仅模型配置）
+            scope.launch(Dispatchers.IO) {
+                try {
+                    com.glassous.aimage.oss.OssSyncManager.downloadModelConfigAsync(context)
+                    // 模型配置下载成功后可选择上报事件，这里保持静默以减少多次提示
+                } catch (_: Exception) { /* ignore */ }
+            }
+            // 异步查询ID并增量补齐缺失历史记录（避免一次性阻塞）
+            scope.launch(Dispatchers.IO) {
+                try {
+                    com.glassous.aimage.oss.OssSyncManager.downloadMissingHistoryIncremental(context)
+                    AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.DownloadOnStart, true))
+                } catch (e: Exception) {
+                    AutoSyncNotifier.report(AutoSyncEvent(AutoSyncType.DownloadOnStart, false))
+                }
             }
         }
     }
