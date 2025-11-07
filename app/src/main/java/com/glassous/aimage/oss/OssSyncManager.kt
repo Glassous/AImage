@@ -4,10 +4,16 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import android.net.Uri
+import java.net.URL
+import java.net.URLConnection
+import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.alibaba.sdk.android.oss.OSSClient
 import com.alibaba.sdk.android.oss.common.auth.OSSPlainTextAKSKCredentialProvider
+import com.alibaba.sdk.android.oss.model.ListObjectsRequest
+import com.alibaba.sdk.android.oss.model.DeleteObjectRequest
 import com.glassous.aimage.ui.screens.HistoryItem
 import com.glassous.aimage.data.ChatHistoryStorage
 import com.glassous.aimage.data.ModelConfigStorage
@@ -235,6 +241,78 @@ object OssSyncManager {
         }
     }
 
+    // 全面上传并覆盖云端：模型配置、提示词助写配置、历史记录索引与图片文件
+    suspend fun uploadOverwriteAll(context: Context, onStep: (String) -> Unit = {}) {
+        withContext(Dispatchers.IO) {
+            val c = client(context) ?: return@withContext
+            val b = bucket(context) ?: return@withContext
+            onStep("正在覆盖上传模型配置…")
+            syncModelConfig(context)
+            onStep("正在覆盖上传提示词助写配置…")
+            syncPromptAssistantConfig(context)
+
+            val localHistory = ChatHistoryStorage.loadAll(context)
+            val localIds = localHistory.map { it.id }.toSet()
+
+            onStep("正在上传所有历史图片…")
+            localHistory.forEach { item ->
+                uploadHistoryItem(context, c, b, item)
+            }
+
+            onStep("正在覆盖远端历史索引…")
+            val idTableKey = "history_ids.json"
+            c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, buildHistoryTableBytes(localHistory)))
+
+            onStep("正在清理云端多余记录…")
+            try {
+                var marker: String? = null
+                do {
+                    val req = ListObjectsRequest(b).apply {
+                        prefix = "history/"
+                        this.marker = marker
+                    }
+                    val listing = c.listObjects(req)
+                    val summaries = listing.objectSummaries
+                    summaries?.forEach { s ->
+                        val key = s.key
+                        if (key.endsWith(".json") && key.startsWith("history/")) {
+                            val idPart = key.removePrefix("history/").removeSuffix(".json")
+                            if (!localIds.contains(idPart)) {
+                                try { c.deleteObject(DeleteObjectRequest(b, key)) } catch (_: Exception) { }
+                            }
+                        }
+                    }
+                    marker = listing.nextMarker
+                } while (listing.isTruncated)
+            } catch (_: Exception) { /* ignore list failures */ }
+
+            onStep("上传覆盖完成")
+        }
+    }
+
+    // 全面下载并覆盖本地：模型配置、提示词助写配置、历史记录索引（不下载图片）
+    suspend fun downloadOverwriteAll(context: Context, onStep: (String) -> Unit = {}) {
+        withContext(Dispatchers.IO) {
+            val c = client(context) ?: return@withContext
+            val b = bucket(context) ?: return@withContext
+            onStep("正在覆盖下载模型配置…")
+            downloadModelConfig(context)
+            onStep("正在覆盖下载提示词助写配置…")
+            downloadPromptAssistantConfig(context)
+
+            onStep("正在覆盖本地历史索引…")
+            val idTableKey = "history_ids.json"
+            val idsRemote = try {
+                val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, idTableKey)
+                val result = c.getObject(get)
+                result.objectContent.bufferedReader().use { it.readText() }
+            } catch (e: Exception) { null }
+            val remoteItems = parseRemoteHistoryTable(idsRemote)
+            ChatHistoryStorage.saveAll(context, remoteItems)
+            onStep("下载覆盖完成")
+        }
+    }
+
     // 增量下载缺失的历史记录（不更新远端 union 索引，避免启动时阻塞与不必要写入）
     suspend fun downloadMissingHistoryIncremental(context: Context) {
         withContext(Dispatchers.IO) {
@@ -370,21 +448,88 @@ object OssSyncManager {
         // 独立记录文件仅保存图片Base64
         val objKey = "history/${item.id}.json"
         val o = JSONObject()
-        // 编码本地图片为Base64（若存在）
-        if (!item.imageUrl.isNullOrBlank()) {
-            try {
-                val bitmap = BitmapFactory.decodeFile(item.imageUrl)
-                if (bitmap != null) {
-                    val baos = ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos)
-                    val base64Img = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-                    o.put("imageBase64", base64Img)
-                }
-            } catch (_: Exception) { /* ignore */ }
+        // 读取图片并转为Base64（支持 http/https、content://、file 路径）
+        val imageData = safeReadImageBytes(context, item.imageUrl)
+        if (imageData != null) {
+            val (bytesRaw, mime) = imageData
+            val base64Img = Base64.encodeToString(bytesRaw, Base64.NO_WRAP)
+            o.put("imageBase64", base64Img)
+            if (mime != null) o.put("imageMime", mime)
         }
         val bytes = o.toString().toByteArray()
         c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, objKey, bytes))
     }
+
+    // 读取图片为字节数组与MIME类型（支持 http/https、content://、file 路径）
+    private fun safeReadImageBytes(context: Context, url: String?): Pair<ByteArray, String?>? {
+        if (url.isNullOrBlank()) return null
+        return try {
+            when {
+                // 支持 data:URI（优先处理）
+                url.startsWith("data:") -> {
+                    val commaIdx = url.indexOf(',')
+                    if (commaIdx <= 5) return null
+                    val meta = url.substring(5, commaIdx) // 去掉前缀 data:
+                    val dataPart = url.substring(commaIdx + 1)
+                    val isBase64 = meta.contains(";base64", true)
+                    val mime = meta.substringBefore(';', missingDelimiterValue = meta)
+                    val bytes = if (isBase64) Base64.decode(dataPart, Base64.DEFAULT) else dataPart.toByteArray()
+                    bytes to (if (mime.contains("/")) mime else null)
+                }
+                url.startsWith("http://") || url.startsWith("https://") -> {
+                    URL(url).openStream().use { ins ->
+                        val bytes = ins.readAllBytesCompat()
+                        val mime = try { URLConnection.guessContentTypeFromStream(bytes.inputStreamCompat()) } catch (_: Exception) { null }
+                        bytes to mime
+                    }
+                }
+                url.startsWith("content://") -> {
+                    val uri = Uri.parse(url)
+                    context.contentResolver.openInputStream(uri)?.use { ins ->
+                        val bytes = ins.readAllBytesCompat()
+                        val mime = context.contentResolver.getType(uri)
+                        bytes to mime
+                    }
+                }
+                else -> {
+                    // 允许直接文件路径或 file://
+                    val path = if (url.startsWith("file://")) url.removePrefix("file://") else url
+                    val f = File(path)
+                    if (!f.exists()) return null
+                    val bytes = f.readBytes()
+                    val mime = when {
+                        path.endsWith(".jpg", true) || path.endsWith(".jpeg", true) -> "image/jpeg"
+                        path.endsWith(".png", true) -> "image/png"
+                        path.endsWith(".webp", true) -> "image/webp"
+                        path.endsWith(".gif", true) -> "image/gif"
+                        else -> null
+                    }
+                    bytes to mime
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // 兼容性：JDK 8 无 readAllBytes，补充扩展
+    private fun InputStream.readAllBytesCompat(): ByteArray {
+        return try {
+            this.readBytes()
+        } catch (_: Throwable) {
+            val buffer = ByteArray(8 * 1024)
+            val out = java.io.ByteArrayOutputStream()
+            var n: Int
+            while (true) {
+                n = this.read(buffer)
+                if (n < 0) break
+                out.write(buffer, 0, n)
+            }
+            out.toByteArray()
+        }
+    }
+
+    private fun ByteArray.inputStreamCompat(): InputStream = java.io.ByteArrayInputStream(this)
 
     private fun downloadHistoryItem(context: Context, c: OSSClient, b: String, id: String): HistoryItem? {
         return try {

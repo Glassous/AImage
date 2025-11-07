@@ -546,7 +546,7 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
             )
 
             Text(
-                text = "配置阿里云 OSS 后，可将模型配置与历史记录上传到云端或从云端下载到本地。",
+                text = "配置阿里云 OSS 后，可执行全面上传或下载并覆盖云端/本地数据。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
             )
@@ -592,7 +592,7 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
                     enabled = configured,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("上传到云端")
+                    Text("全面上传并覆盖")
                 }
 
                 FilledTonalButton(
@@ -603,7 +603,7 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
                     enabled = configured,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("从云端下载")
+                    Text("全面下载并覆盖")
                 }
             }
 
@@ -636,32 +636,32 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
     if (showConfirm) {
         AlertDialog(
             onDismissRequest = { showConfirm = false },
-            title = { Text(if (pendingAction == CloudAction.Upload) "确认上传到云端" else "确认从云端下载") },
+            title = { Text(if (pendingAction == CloudAction.Upload) "确认全面上传并覆盖云端" else "确认全面下载并覆盖本地") },
             text = {
                 Text(if (pendingAction == CloudAction.Upload)
-                    "将上传本地模型配置与历史记录到云端。是否继续？"
-                    else "将从云端下载模型配置与历史记录并与本地合并。是否继续？")
+                    "将上传本地模型配置与历史记录，并覆盖云端同名数据。是否继续？"
+                    else "将从云端下载模型配置与历史记录，并覆盖本地数据。是否继续？")
             },
             confirmButton = {
                 TextButton(onClick = {
                     showConfirm = false
                     showProgress = true
-                    progressText = if (pendingAction == CloudAction.Upload) "正在上传…" else "正在下载…"
+                    progressText = if (pendingAction == CloudAction.Upload) "正在覆盖上传…" else "正在覆盖下载…"
                     scope.launch {
                         try {
                             if (pendingAction == CloudAction.Upload) {
-                                com.glassous.aimage.oss.OssSyncManager.uploadToCloud(context) { step ->
+                                com.glassous.aimage.oss.OssSyncManager.uploadOverwriteAll(context) { step ->
                                     progressText = step
                                 }
                                 resultTitle = "上传完成"
-                                resultMessage = "已成功上传到云端。"
+                                resultMessage = "已成功覆盖上传到云端。"
                                 isError = false
                             } else {
-                                com.glassous.aimage.oss.OssSyncManager.downloadFromCloud(context) { step ->
+                                com.glassous.aimage.oss.OssSyncManager.downloadOverwriteAll(context) { step ->
                                     progressText = step
                                 }
                                 resultTitle = "下载完成"
-                                resultMessage = "已成功从云端下载。"
+                                resultMessage = "已成功覆盖下载并替换本地数据。"
                                 isError = false
                             }
                         } catch (e: Exception) {
