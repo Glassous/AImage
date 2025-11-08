@@ -10,12 +10,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.glassous.aimage.ui.screens.AImageApp
 import com.glassous.aimage.ui.theme.AImageTheme
+import com.glassous.aimage.util.configureTransparentNavigationBar
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        configureTransparentNavigationBar()
         setContent {
             AImageTheme {
                 AImageApp()

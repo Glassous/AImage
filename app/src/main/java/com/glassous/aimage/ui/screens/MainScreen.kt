@@ -396,10 +396,13 @@ fun MainScreen(
                 shadowElevation = 8.dp
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    val navBarInset = androidx.compose.foundation.layout.WindowInsets.navigationBars
+                        .asPaddingValues()
+                        .calculateBottomPadding()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp + navBarInset),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {

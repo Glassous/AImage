@@ -167,11 +167,26 @@ fun ModelConfigScreen(
             )
         }
     ) { paddingValues ->
+        val layoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current
+        val noBottomPadding = androidx.compose.foundation.layout.PaddingValues(
+            start = paddingValues.calculateStartPadding(layoutDirection),
+            top = paddingValues.calculateTopPadding(),
+            end = paddingValues.calculateEndPadding(layoutDirection),
+            bottom = 0.dp
+        )
+        val navBarInset = androidx.compose.foundation.layout.WindowInsets.navigationBars
+            .asPaddingValues()
+            .calculateBottomPadding()
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues),
-            contentPadding = PaddingValues(16.dp),
+                .padding(noBottomPadding),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 16.dp,
+                top = 16.dp,
+                end = 16.dp,
+                bottom = 16.dp + navBarInset
+            ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             items(ModelGroupType.values()) { group ->
