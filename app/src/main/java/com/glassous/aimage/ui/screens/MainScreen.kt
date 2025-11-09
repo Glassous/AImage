@@ -545,24 +545,6 @@ fun MainScreen(
                             }
 
                             try {
-                                // 先对每个窗口做历史保存（如已有图片）
-                                windowsWithModel.forEach { w ->
-                                    if (w.imageUrl != null && w.inputText.isNotBlank()) {
-                                        val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(java.util.Date())
-                                        val provider = w.modelRef!!.group
-                                        val modelLabel = labelFor(w.modelRef)
-                                        val item = HistoryItem(
-                                            id = System.currentTimeMillis().toString(),
-                                            prompt = w.inputText,
-                                            imageUrl = w.imageUrl!!,
-                                            timestamp = ts,
-                                            model = modelLabel,
-                                            provider = provider
-                                        )
-                                        onAddHistory(item)
-                                    }
-                                }
-
                                 // 设置所有已配置模型的窗口进入加载状态，并写入广播输入
                                 windowsWithModel.forEach { w ->
                                     updateWindowById(w.id) { window ->
