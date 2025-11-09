@@ -1259,6 +1259,7 @@ fun ChatWindowContent(
                     ) {
                         // 根据图片实际比例动态调整显示比例
                         var imageAspect by remember(url) { mutableStateOf<Float?>(null) }
+                        var imageLoadError by remember(url) { mutableStateOf(false) }
                         
                         AsyncImage(
                             model = url,
@@ -1270,14 +1271,27 @@ fun ChatWindowContent(
                                 .clickable { onImageClick(url) },
                             contentScale = ContentScale.Fit,
                             onSuccess = { success ->
+                                imageLoadError = false
                                 val d = success.result.drawable
                                 val w = d.intrinsicWidth
                                 val h = d.intrinsicHeight
                                 if (w > 0 && h > 0) {
                                     imageAspect = w.toFloat() / h.toFloat()
                                 }
+                            },
+                            onError = { _ ->
+                                imageLoadError = true
                             }
                         )
+
+                        if (imageLoadError) {
+                            Text(
+                                text = "图片加载失败",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
 
                         // 模型与时间信息
                         val modelText = window.modelRef?.let { ref ->
@@ -1408,4 +1422,5 @@ private fun ModelGroupType.logoRes(): Int = when (this) {
     ModelGroupType.Doubao -> R.drawable.doubao
     ModelGroupType.Qwen -> R.drawable.qwen
     ModelGroupType.MiniMax -> R.drawable.minimax
+    ModelGroupType.OpenRouter -> R.drawable.openrouter
 }

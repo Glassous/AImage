@@ -33,7 +33,8 @@ enum class ModelGroupType(val displayName: String, val website: String) {
     Google("Gemini", "https://aistudio.google.com/api-keys"),
     Doubao("豆包", "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey"),
     Qwen("Qwen", "https://bailian.console.aliyun.com/?tab=app#/api-key"),
-    MiniMax("MiniMax", "https://platform.minimaxi.com/#/developer")
+    MiniMax("MiniMax", "https://platform.minimaxi.com/#/developer"),
+    OpenRouter("OpenRouter", "https://openrouter.ai/keys")
 }
 
 private fun ModelGroupType.logoRes(): Int = when (this) {
@@ -41,6 +42,7 @@ private fun ModelGroupType.logoRes(): Int = when (this) {
     ModelGroupType.Doubao -> R.drawable.doubao
     ModelGroupType.Qwen -> R.drawable.qwen
     ModelGroupType.MiniMax -> R.drawable.minimax
+    ModelGroupType.OpenRouter -> R.drawable.openrouter
 }
 
 class ModelGroupConfig(
@@ -68,6 +70,11 @@ private fun defaultPresetsFor(group: ModelGroupType): List<UserModel> = when (gr
         UserModel(name = "image-01-live", displayName = "image-01-live", note = ""),
         UserModel(name = "image-01", displayName = "image-01", note = "")
     )
+    ModelGroupType.OpenRouter -> listOf(
+        UserModel(name = "openai/gpt-5-image-mini", displayName = "GPT-5 Image Mini", note = ""),
+        UserModel(name = "openai/gpt-5-image", displayName = "GPT-5 Image", note = ""),
+        UserModel(name = "google/gemini-2.5-flash-image", displayName = "Nano Banana🍌", note = "")
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,7 +88,8 @@ fun ModelConfigScreen(
             ModelGroupType.Google to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf()),
             ModelGroupType.Doubao to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf()),
             ModelGroupType.Qwen to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf()),
-            ModelGroupType.MiniMax to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf())
+            ModelGroupType.MiniMax to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf()),
+            ModelGroupType.OpenRouter to ModelGroupConfig(apiKey = "", initialModels = mutableStateListOf())
         )
     }
 

@@ -308,7 +308,29 @@ object OssSyncManager {
                 result.objectContent.bufferedReader().use { it.readText() }
             } catch (e: Exception) { null }
             val remoteItems = parseRemoteHistoryTable(idsRemote)
-            ChatHistoryStorage.saveAll(context, remoteItems)
+
+            // 新增：全面下载每条历史记录文件（包含图片），并与元数据合并
+            onStep("正在下载所有历史图片…")
+            val restored = mutableListOf<HistoryItem>()
+            remoteItems.forEach { meta ->
+                val downloaded = downloadHistoryItem(context, c, b, meta.id)
+                val finalItem = if (downloaded != null) {
+                    // 以远端索引为主，补充图片路径
+                    HistoryItem(
+                        id = meta.id,
+                        prompt = meta.prompt,
+                        imageUrl = downloaded.imageUrl ?: meta.imageUrl,
+                        timestamp = meta.timestamp,
+                        model = meta.model,
+                        provider = meta.provider
+                    )
+                } else {
+                    meta
+                }
+                restored.add(finalItem)
+            }
+
+            ChatHistoryStorage.saveAll(context, restored)
             onStep("下载覆盖完成")
         }
     }
@@ -538,6 +560,11 @@ object OssSyncManager {
             val text = result.objectContent.bufferedReader().use { it.readText() }
             val o = JSONObject(text)
             val imgBase64 = o.optString("imageBase64", "")
+            // 兼容：若记录文件包含元数据则解析出来
+            val prompt = o.optString("prompt", "")
+            val timestamp = o.optString("timestamp", "")
+            val model = o.optString("model", "")
+            val provider = parseProviderCompat(o.optString("providerGroup", ""))
             var imageUrl: String? = null
             if (imgBase64.isNotBlank()) {
                 try {
@@ -554,14 +581,12 @@ object OssSyncManager {
                 imageUrl = null
             }
 
-            // Robust provider parsing compatible with local storage/backup
-            val provider = com.glassous.aimage.ui.screens.ModelGroupType.Google
             HistoryItem(
                 id = id,
-                prompt = "",
+                prompt = prompt,
                 imageUrl = imageUrl,
-                timestamp = "",
-                model = "",
+                timestamp = timestamp,
+                model = model,
                 provider = provider
             )
         } catch (_: Exception) {

@@ -8,6 +8,7 @@ object RetrofitClient {
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/"
     private const val DOUBAO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3/"
     private const val QWEN_BASE_URL = "https://dashscope.aliyuncs.com/"
+    private const val OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/"
     // MiniMax 不同区域主机：国内与全球（注意 minimaxi 比 minimax 多一个 i）
     private const val MINIMAX_BASE_URL_CN = "https://api.minimax.chat/"
     // 依据官方示例改为 minimaxi.com（全球）
@@ -60,6 +61,18 @@ object RetrofitClient {
 
     val qwenApiService: QwenApiService by lazy {
         qwenRetrofit.create(QwenApiService::class.java)
+    }
+
+    private val openRouterRetrofit: Retrofit by lazy {
+        Retrofit.Builder()
+            .baseUrl(OPENROUTER_BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .client(okHttpClient)
+            .build()
+    }
+
+    val openRouterApiService: OpenRouterApiService by lazy {
+        openRouterRetrofit.create(OpenRouterApiService::class.java)
     }
 
     private val minimaxRetrofitCn: Retrofit by lazy {

@@ -208,4 +208,5 @@ private fun ModelGroupType.logoRes(): Int = when (this) {
     ModelGroupType.Doubao -> R.drawable.doubao
     ModelGroupType.Qwen -> R.drawable.qwen
     ModelGroupType.MiniMax -> R.drawable.minimax
+    ModelGroupType.OpenRouter -> R.drawable.openrouter
 }

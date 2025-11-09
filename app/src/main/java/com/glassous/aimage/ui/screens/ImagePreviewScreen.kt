@@ -154,6 +154,7 @@ fun ImagePreviewScreen(
                 .padding(paddingValues),
             contentAlignment = Alignment.Center
         ) {
+            var loadError by remember(imageUrl) { mutableStateOf(false) }
             AsyncImage(
                 model = imageUrl,
                 contentDescription = "预览图片",
@@ -168,8 +169,18 @@ fun ImagePreviewScreen(
                         clip = true
                     }
                     .transformable(transformState),
-                contentScale = ContentScale.Fit
+                contentScale = ContentScale.Fit,
+                onError = { _ -> loadError = true },
+                onSuccess = { _ -> loadError = false }
             )
+
+            if (loadError) {
+                Text(
+                    text = "图片加载失败，请重试",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }

@@ -36,6 +36,11 @@ object ApiService {
             "https://images.unsplash.com/photo-1529243856184-fd1e3c2e0c08?w=600&h=400",
             "https://images.unsplash.com/photo-1496317556649-f930d733eea0?w=600&h=400",
             "https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=600&h=400"
+        ),
+        ModelGroupType.OpenRouter to listOf(
+            "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=600&h=400",
+            "https://images.unsplash.com/photo-1518770660439-4636190af475?w=600&h=400",
+            "https://images.unsplash.com/photo-1526318472351-c75fcf070305?w=600&h=400"
         )
     )
     
@@ -44,7 +49,8 @@ object ApiService {
         ModelGroupType.Google to 1500L..2500L,
         ModelGroupType.Doubao to 2000L..3000L,
         ModelGroupType.Qwen to 1800L..2800L,
-        ModelGroupType.MiniMax to 1600L..2600L
+        ModelGroupType.MiniMax to 1600L..2600L,
+        ModelGroupType.OpenRouter to 1700L..2700L
     )
     
     // 不同厂商的成功率（模拟网络不稳定）
@@ -52,7 +58,8 @@ object ApiService {
         ModelGroupType.Google to 0.95,
         ModelGroupType.Doubao to 0.90,
         ModelGroupType.Qwen to 0.92,
-        ModelGroupType.MiniMax to 0.93
+        ModelGroupType.MiniMax to 0.93,
+        ModelGroupType.OpenRouter to 0.94
     )
     
     /**
@@ -94,7 +101,182 @@ object ApiService {
                     generateImageMock(provider, modelName, prompt)
                 }
             }
+            ModelGroupType.OpenRouter -> {
+                if (context != null) {
+                    generateImageWithOpenRouter(context, modelName, prompt, aspectRatio)
+                } else {
+                    generateImageMock(provider, modelName, prompt)
+                }
+            }
         }
+    }
+
+    // -------- OpenRouter 文生图（Chat Completions 图片输出） --------
+    private suspend fun generateImageWithOpenRouter(
+        context: Context,
+        modelName: String,
+        prompt: String,
+        aspectRatio: String
+    ): ApiResponse {
+        return try {
+            val cleanedPrompt = prompt.trim()
+            if (cleanedPrompt.isEmpty()) {
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "提示词为空，请输入描述后重试",
+                    success = false,
+                    errorMessage = "提示词为空，请输入描述后重试"
+                )
+            }
+            var apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.OpenRouter).trim()
+            // 清洗潜在的重复 Bearer 前缀与引号
+            apiKey = apiKey.trim('"').trim('\'')
+            apiKey = apiKey.replace(Regex("(?i)^Bearer\\s+"), "").trim()
+            if (apiKey.isEmpty()) {
+                return ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = "请先在设置中配置 OpenRouter API 密钥"
+                )
+            }
+
+            val request = OpenRouterChatRequest(
+                model = modelName,
+                messages = listOf(
+                    OpenRouterMessage(
+                        role = "user",
+                        content = listOf(
+                            // OpenRouter chat/completions 支持在 content 数组中使用 type="text" 传递输入文本
+                            OpenRouterContentPart(type = "text", text = cleanedPrompt)
+                        )
+                    )
+                ),
+                modalities = listOf("text", "image"),
+                image_config = OpenRouterImageConfig(aspect_ratio = aspectRatio)
+            )
+
+            val response = RetrofitClient.openRouterApiService.createCompletion(
+                authorization = "Bearer ${apiKey}",
+                request = request
+            )
+
+            if (response.isSuccessful) {
+                val body = response.body()
+                val choice = body?.choices?.firstOrNull()
+                // 优先从 images 数组中解析图片（符合 OpenRouter 文生图返回格式）
+                val images = choice?.message?.images.orEmpty()
+                val imageUrlFromImages = images.firstOrNull { it.image_url?.url?.isNotBlank() == true }?.image_url?.url
+                val contentText = choice?.message?.content?.trim()
+
+                // 若 images 存在，直接使用（若为 data:URL，规范化为本地文件路径）
+                if (!imageUrlFromImages.isNullOrBlank()) {
+                    val normalized = normalizeImageUrlForDisplay(context, imageUrlFromImages)
+                    return ApiResponse(
+                        imageUrl = normalized,
+                        responseText = generateResponseText(ModelGroupType.OpenRouter, modelName, prompt),
+                        success = true
+                    )
+                }
+
+                // 其次尝试从文本中提取图片URL或data URI
+                val extractedImageUrl = contentText?.let { extractImageUrlFromText(it) }
+
+                if (!extractedImageUrl.isNullOrBlank()) {
+                    val normalized = normalizeImageUrlForDisplay(context, extractedImageUrl)
+                    return ApiResponse(
+                        imageUrl = normalized,
+                        responseText = generateResponseText(ModelGroupType.OpenRouter, modelName, prompt),
+                        success = true
+                    )
+                }
+
+                if (!contentText.isNullOrBlank()) {
+                    return ApiResponse(
+                        imageUrl = "",
+                        responseText = contentText,
+                        success = false,
+                        errorMessage = "API返回了文字回复但没有图片数据"
+                    )
+                }
+
+                ApiResponse(
+                    imageUrl = "",
+                    responseText = "",
+                    success = false,
+                    errorMessage = "API返回了空的响应数据"
+                )
+            } else {
+                val detail = buildHttpErrorDetail(response)
+                ApiResponse(
+                    imageUrl = "",
+                    responseText = detail,
+                    success = false,
+                    errorMessage = detail
+                )
+            }
+        } catch (e: Exception) {
+            ApiResponse(
+                imageUrl = "",
+                responseText = "",
+                success = false,
+                errorMessage = "网络请求异常：${e.message}"
+            )
+        }
+    }
+
+    // 将 data:URL 规范化为本地文件路径，其他协议保留原样
+    private suspend fun normalizeImageUrlForDisplay(context: Context, url: String): String {
+        return try {
+            if (url.startsWith("data:", ignoreCase = true)) {
+                val base64Part = url.substringAfter("base64,", "")
+                if (base64Part.isNotEmpty()) {
+                    val mime = url.substringAfter("data:", "").substringBefore(';').lowercase()
+                    val ext = when {
+                        mime.contains("png") -> "png"
+                        mime.contains("jpeg") || mime.contains("jpg") -> "jpg"
+                        mime.contains("webp") -> "webp"
+                        else -> "png"
+                    }
+                    val bytes = android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
+                    saveImageToAppDataFromBytes(context, bytes, suggestedExt = ext)
+                } else {
+                    url
+                }
+            } else {
+                url
+            }
+        } catch (_: Exception) {
+            url
+        }
+    }
+
+    // 提取内容字符串中的图片URL或data URI
+    private fun extractImageUrlFromText(content: String): String? {
+        // Data URI（base64）
+        val dataUriRegex = Regex("data:image/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+", RegexOption.IGNORE_CASE)
+        dataUriRegex.find(content)?.let { return it.value }
+
+        // JSON 字符串中包含 image_url/url 字段
+        val trimmed = content.trim()
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            try {
+                val json = com.google.gson.JsonParser.parseString(trimmed).asJsonObject
+                val direct = json.get("image_url")?.asString
+                if (!direct.isNullOrBlank()) return direct
+                val url = json.get("url")?.asString
+                if (!url.isNullOrBlank()) return url
+                val image = json.get("image")?.asString
+                if (!image.isNullOrBlank()) return image
+            } catch (_: Exception) { /* 非严格JSON，忽略 */ }
+        }
+
+        // 普通 http(s) URL（优先识别常见图片扩展名）
+        val urlRegex = Regex("https?://\\S+", RegexOption.IGNORE_CASE)
+        val url = urlRegex.findAll(content).map { it.value.trimEnd('.', ',', ';') }.firstOrNull {
+            it.contains(".png") || it.contains(".jpg") || it.contains(".jpeg") || it.contains(".webp") || it.contains(".gif")
+        }
+        return url
     }
 
     // 真正的Gemini API调用
@@ -992,6 +1174,7 @@ object ApiService {
             ModelGroupType.Doubao -> "豆包"
             ModelGroupType.Qwen -> "通义千问"
             ModelGroupType.MiniMax -> "MiniMax"
+            ModelGroupType.OpenRouter -> "OpenRouter"
         }
         
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())
@@ -1009,6 +1192,7 @@ object ApiService {
             ModelGroupType.Doubao -> Random.nextDouble() > 0.08 // 92% 可用率
             ModelGroupType.Qwen -> Random.nextDouble() > 0.06   // 94% 可用率
             ModelGroupType.MiniMax -> Random.nextDouble() > 0.07 // 93% 可用率
+            ModelGroupType.OpenRouter -> Random.nextDouble() > 0.06 // 94% 可用率
         }
     }
 }
