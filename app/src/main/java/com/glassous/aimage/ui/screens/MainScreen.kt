@@ -390,6 +390,8 @@ fun MainScreen(
         },
         // 悬浮按钮改由内容层覆盖实现，以支持居左显示
         bottomBar = {
+            // 当没有窗口时，隐藏底部输入区域
+            if (chatWindows.isNotEmpty()) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface,
@@ -502,7 +504,8 @@ fun MainScreen(
                             }
                         }
                     )
-                    val showSendButton = getCurrentWindow()?.inputText?.isNotBlank() == true
+                    // 当图片正在生成时，隐藏发送按钮；仅在当前窗口非加载且输入不为空时显示
+                    val showSendButton = (getCurrentWindow()?.isLoading != true) && (getCurrentWindow()?.inputText?.isNotBlank() == true)
                     AnimatedVisibility(
                         visible = showSendButton,
                         enter =
@@ -667,6 +670,7 @@ fun MainScreen(
                         }
                     }
                 }
+            }
             }
         }
     ) { paddingValues ->
@@ -1259,7 +1263,6 @@ fun ChatWindowContent(
                     ) {
                         // 根据图片实际比例动态调整显示比例
                         var imageAspect by remember(url) { mutableStateOf<Float?>(null) }
-                        var imageLoadError by remember(url) { mutableStateOf(false) }
                         
                         AsyncImage(
                             model = url,
@@ -1271,27 +1274,14 @@ fun ChatWindowContent(
                                 .clickable { onImageClick(url) },
                             contentScale = ContentScale.Fit,
                             onSuccess = { success ->
-                                imageLoadError = false
                                 val d = success.result.drawable
                                 val w = d.intrinsicWidth
                                 val h = d.intrinsicHeight
                                 if (w > 0 && h > 0) {
                                     imageAspect = w.toFloat() / h.toFloat()
                                 }
-                            },
-                            onError = { _ ->
-                                imageLoadError = true
                             }
                         )
-
-                        if (imageLoadError) {
-                            Text(
-                                text = "图片加载失败",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                        }
 
                         // 模型与时间信息
                         val modelText = window.modelRef?.let { ref ->

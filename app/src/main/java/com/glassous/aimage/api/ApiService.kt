@@ -169,11 +169,10 @@ object ApiService {
                 val imageUrlFromImages = images.firstOrNull { it.image_url?.url?.isNotBlank() == true }?.image_url?.url
                 val contentText = choice?.message?.content?.trim()
 
-                // 若 images 存在，直接使用（若为 data:URL，规范化为本地文件路径）
+                // 若 images 存在，直接使用
                 if (!imageUrlFromImages.isNullOrBlank()) {
-                    val normalized = normalizeImageUrlForDisplay(context, imageUrlFromImages)
                     return ApiResponse(
-                        imageUrl = normalized,
+                        imageUrl = imageUrlFromImages,
                         responseText = generateResponseText(ModelGroupType.OpenRouter, modelName, prompt),
                         success = true
                     )
@@ -183,9 +182,8 @@ object ApiService {
                 val extractedImageUrl = contentText?.let { extractImageUrlFromText(it) }
 
                 if (!extractedImageUrl.isNullOrBlank()) {
-                    val normalized = normalizeImageUrlForDisplay(context, extractedImageUrl)
                     return ApiResponse(
-                        imageUrl = normalized,
+                        imageUrl = extractedImageUrl,
                         responseText = generateResponseText(ModelGroupType.OpenRouter, modelName, prompt),
                         success = true
                     )
@@ -222,32 +220,6 @@ object ApiService {
                 success = false,
                 errorMessage = "网络请求异常：${e.message}"
             )
-        }
-    }
-
-    // 将 data:URL 规范化为本地文件路径，其他协议保留原样
-    private suspend fun normalizeImageUrlForDisplay(context: Context, url: String): String {
-        return try {
-            if (url.startsWith("data:", ignoreCase = true)) {
-                val base64Part = url.substringAfter("base64,", "")
-                if (base64Part.isNotEmpty()) {
-                    val mime = url.substringAfter("data:", "").substringBefore(';').lowercase()
-                    val ext = when {
-                        mime.contains("png") -> "png"
-                        mime.contains("jpeg") || mime.contains("jpg") -> "jpg"
-                        mime.contains("webp") -> "webp"
-                        else -> "png"
-                    }
-                    val bytes = android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
-                    saveImageToAppDataFromBytes(context, bytes, suggestedExt = ext)
-                } else {
-                    url
-                }
-            } else {
-                url
-            }
-        } catch (_: Exception) {
-            url
         }
     }
 
