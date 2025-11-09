@@ -169,10 +169,32 @@ object ApiService {
                 val imageUrlFromImages = images.firstOrNull { it.image_url?.url?.isNotBlank() == true }?.image_url?.url
                 val contentText = choice?.message?.content?.trim()
 
-                // 若 images 存在，直接使用
+                // 若 images 存在，优先尝试将图片落盘到本地并返回 file:// 统一路径
                 if (!imageUrlFromImages.isNullOrBlank()) {
+                    val saved = try {
+                        val url = imageUrlFromImages
+                        when {
+                            url.startsWith("http") -> {
+                                // 远程URL，下载并保存到应用数据目录
+                                saveImageToAppDataFromUrl(context, url, suggestedExt = "jpg")
+                            }
+                            url.startsWith("data:") -> {
+                                // data:image/...;base64,xxxx 直接解码落盘
+                                val base64Part = url.substringAfter("base64,", "")
+                                if (base64Part.isNotEmpty()) {
+                                    val bytes = android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
+                                    saveImageToAppDataFromBytes(context, bytes, suggestedExt = "png")
+                                } else url
+                            }
+                            url.startsWith("file://") -> url
+                            else -> url
+                        }
+                    } catch (_: Exception) {
+                        // 兜底使用原始URL，避免完全不可用
+                        imageUrlFromImages
+                    }
                     return ApiResponse(
-                        imageUrl = imageUrlFromImages,
+                        imageUrl = saved,
                         responseText = generateResponseText(ModelGroupType.OpenRouter, modelName, prompt),
                         success = true
                     )
@@ -182,8 +204,25 @@ object ApiService {
                 val extractedImageUrl = contentText?.let { extractImageUrlFromText(it) }
 
                 if (!extractedImageUrl.isNullOrBlank()) {
+                    val saved = try {
+                        val url = extractedImageUrl
+                        when {
+                            url.startsWith("http") -> saveImageToAppDataFromUrl(context, url, suggestedExt = "jpg")
+                            url.startsWith("data:") -> {
+                                val base64Part = url.substringAfter("base64,", "")
+                                if (base64Part.isNotEmpty()) {
+                                    val bytes = android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
+                                    saveImageToAppDataFromBytes(context, bytes, suggestedExt = "png")
+                                } else url
+                            }
+                            url.startsWith("file://") -> url
+                            else -> url
+                        }
+                    } catch (_: Exception) {
+                        extractedImageUrl
+                    }
                     return ApiResponse(
-                        imageUrl = extractedImageUrl,
+                        imageUrl = saved,
                         responseText = generateResponseText(ModelGroupType.OpenRouter, modelName, prompt),
                         success = true
                     )
