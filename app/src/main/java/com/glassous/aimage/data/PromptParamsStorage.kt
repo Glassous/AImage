@@ -15,29 +15,36 @@ object PromptParamsStorage {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
+    // —— 会话态（仅内存）参数值与启用状态，不做持久化 ——
+    private val sessionEnabled: MutableMap<String, Boolean> = mutableMapOf()
+    private val sessionValues: MutableMap<String, String> = mutableMapOf()
+
     fun saveEnabled(ctx: Context, name: String, enabled: Boolean) {
-        prefs(ctx).edit().putBoolean(KEY_ENABLED_PREFIX + name, enabled).apply()
+        // 仅保存到会话内存，不写入持久化存储
+        sessionEnabled[name] = enabled
     }
 
     fun loadEnabled(ctx: Context, name: String): Boolean {
-        return prefs(ctx).getBoolean(KEY_ENABLED_PREFIX + name, false)
+        // 优先读取会话值；为兼容旧版，若会话无值则回退到持久化读取
+        return sessionEnabled[name] ?: prefs(ctx).getBoolean(KEY_ENABLED_PREFIX + name, false)
     }
 
     fun saveValue(ctx: Context, name: String, value: String) {
-        prefs(ctx).edit().putString(KEY_VALUE_PREFIX + name, value).apply()
+        // 仅保存到会话内存，不写入持久化存储
+        sessionValues[name] = value
     }
 
     fun loadValue(ctx: Context, name: String): String {
-        return prefs(ctx).getString(KEY_VALUE_PREFIX + name, "").orEmpty()
+        // 优先读取会话值；为兼容旧版，若会话无值则回退到持久化读取
+        return sessionValues[name] ?: prefs(ctx).getString(KEY_VALUE_PREFIX + name, "").orEmpty()
     }
 
     fun enabledCount(ctx: Context): Int {
-        val all = prefs(ctx).all
+        // 仅统计会话内存中的启用且有值的参数数量
         var count = 0
-        all.forEach { (key, value) ->
-            if (key.startsWith(KEY_ENABLED_PREFIX) && value is Boolean && value) {
-                val name = key.removePrefix(KEY_ENABLED_PREFIX)
-                val v = prefs(ctx).getString(KEY_VALUE_PREFIX + name, "").orEmpty()
+        sessionEnabled.forEach { (name, enabled) ->
+            if (enabled) {
+                val v = sessionValues[name].orEmpty()
                 if (v.isNotBlank()) count++
             }
         }
@@ -117,11 +124,9 @@ object PromptParamsStorage {
         val idx = list.indexOfFirst { it.name == name }
         if (idx >= 0) list.removeAt(idx)
         saveParamDefs(ctx, list)
-        // clean enabled/value and favorites
-        val ed = prefs(ctx).edit()
-        ed.remove(KEY_ENABLED_PREFIX + name)
-        ed.remove(KEY_VALUE_PREFIX + name)
-        ed.apply()
+        // 清理会话值与收藏
+        sessionEnabled.remove(name)
+        sessionValues.remove(name)
         val favs = loadFavorites(ctx).toMutableSet()
         favs.remove(name)
         saveFavorites(ctx, favs)
@@ -129,15 +134,12 @@ object PromptParamsStorage {
 
     fun renameParam(ctx: Context, oldName: String, newName: String) {
         if (oldName == newName) return
-        val p = prefs(ctx)
-        val enabled = p.getBoolean(KEY_ENABLED_PREFIX + oldName, false)
-        val value = p.getString(KEY_VALUE_PREFIX + oldName, null)
-        val ed = p.edit()
-        ed.remove(KEY_ENABLED_PREFIX + oldName)
-        ed.remove(KEY_VALUE_PREFIX + oldName)
-        ed.putBoolean(KEY_ENABLED_PREFIX + newName, enabled)
-        if (value != null) ed.putString(KEY_VALUE_PREFIX + newName, value)
-        ed.apply()
+        val enabled = sessionEnabled[oldName] ?: false
+        val value = sessionValues[oldName]
+        sessionEnabled.remove(oldName)
+        sessionValues.remove(oldName)
+        sessionEnabled[newName] = enabled
+        if (value != null) sessionValues[newName] = value
         val favs = loadFavorites(ctx).toMutableSet()
         if (favs.remove(oldName)) favs.add(newName)
         saveFavorites(ctx, favs)

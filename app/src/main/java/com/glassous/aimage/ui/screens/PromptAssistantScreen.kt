@@ -28,6 +28,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import com.glassous.aimage.api.PolishAIClient
 import org.json.JSONObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 // AI 配置数据与存储（顶层定义，避免局部 object 报错）
 data class AIConfig(val baseUrl: String, val apiKey: String, val model: String)
@@ -275,7 +277,7 @@ fun PromptAssistantScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    val canShowFab = cfgState != null && !streaming
+                    val canShowFab = cfgState != null && !streaming && buildFinalPrompt().isNotBlank()
                     if (canShowFab) {
                         SmallFloatingActionButton(
                             onClick = {

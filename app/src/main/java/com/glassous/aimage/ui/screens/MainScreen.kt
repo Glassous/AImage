@@ -321,11 +321,37 @@ fun MainScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "AImage",
-                            fontWeight = FontWeight.Bold
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        val currentWindow = getCurrentWindow()
+                        val titleText = if (currentWindow == null) {
+                            "AImage"
+                        } else {
+                            val ref = currentWindow.modelRef
+                            val m = ref?.let { groupModels[it.group]?.find { um -> um.name == it.modelName } }
+                            m?.displayName?.takeIf { it.isNotBlank() } ?: m?.name ?: "未选择模型"
+                        }
+                        TextButton(onClick = { if (getCurrentWindow() != null) showSheet = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                            Text(
+                                text = titleText,
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+                        if (currentWindow != null) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { currentWindow.let { removeWindowById(it.id) } },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "关闭窗口",
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
                         // 自动同步状态提示图标（仅自动触发时显示，成功为对勾，失败为叉号）
                         val event by com.glassous.aimage.oss.AutoSyncNotifier.events.collectAsState(initial = null)
                         var showIndicator by remember { mutableStateOf(false) }
@@ -339,7 +365,7 @@ fun MainScreen(
                             }
                         }
                         if (showIndicator) {
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Icon(
                                 imageVector = if (lastSuccess) Icons.Filled.Check else Icons.Filled.Close,
                                 contentDescription = if (lastSuccess) "自动同步成功" else "自动同步失败"
@@ -356,29 +382,40 @@ fun MainScreen(
                     }
                 },
                 actions = {
-                    // 顶部栏不再显示快捷窗口图标，改为右侧快捷栏
-                    IconButton(onClick = { showNewChatDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "新建聊天窗口"
-                        )
-                    }
-                    // 提示词助写入口按钮
-                    val context = LocalContext.current
-                    IconButton(onClick = {
-                        context.startActivity(android.content.Intent(context, com.glassous.aimage.PromptAssistantActivity::class.java))
-                    }) {
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = "提示词助写"
-                        )
-                    }
-                    // 呼出/关闭右侧快捷栏按钮（靠右，位于 + 号右侧）
-                    IconButton(onClick = { showRightQuickBar = !showRightQuickBar }) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "切换快捷窗口栏"
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // 顶部栏不再显示快捷窗口图标，改为右侧快捷栏
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showNewChatDialog = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "新建聊天窗口")
+                        }
+                        // 提示词助写入口按钮
+                        val context = LocalContext.current
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    context.startActivity(android.content.Intent(context, com.glassous.aimage.PromptAssistantActivity::class.java))
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = "提示词助写")
+                        }
+                        // 呼出/关闭右侧快捷栏按钮（靠右，位于 + 号右侧）
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { showRightQuickBar = !showRightQuickBar },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(imageVector = Icons.Default.MoreVert, contentDescription = "切换快捷窗口栏")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -1177,8 +1214,9 @@ fun ChatWindowContent(
     onCloseClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    Box(modifier = modifier.fillMaxSize()) {
     LazyColumn(
-        modifier = modifier.padding(16.dp),
+        modifier = Modifier.padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(bottom = 16.dp)
     ) {
@@ -1357,34 +1395,32 @@ fun ChatWindowContent(
             }
         }
         
-        // 空状态提示
-        if (!window.isLoading && window.imageUrl == null && window.inputText.isBlank()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "开始创作",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "在下方输入框中描述您想要生成的图片",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                }
+    }
+    // 空状态覆盖层（全屏居中显示）
+    if (!window.isLoading && window.imageUrl == null && window.inputText.isBlank()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "开始创作",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "在下方输入框中描述您想要生成的图片",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
             }
         }
+    }
     }
 }
 

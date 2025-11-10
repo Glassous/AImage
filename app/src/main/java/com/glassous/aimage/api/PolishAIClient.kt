@@ -31,9 +31,16 @@ object PolishAIClient {
 
     data class Handle(val cancel: () -> Unit)
 
-    private fun buildUrl(baseUrl: String): String {
-        val trimmed = baseUrl.trimEnd('/')
-        return if (trimmed.contains("chat/completions")) trimmed else "$trimmed/v1/chat/completions"
+    private fun candidateUrls(baseUrl: String): List<String> {
+        val t = baseUrl.trimEnd('/')
+        val has = t.contains("chat/completions")
+        return if (has) {
+            val a = t
+            val b = t.replace("/v1/chat/completions", "/chat/completions")
+            if (a == b) listOf(a) else listOf(a, b)
+        } else {
+            listOf("$t/v1/chat/completions", "$t/chat/completions")
+        }
     }
 
     private fun buildBody(model: String, source: String, mode: Mode): String {
@@ -83,76 +90,88 @@ object PolishAIClient {
             .addInterceptor(logging)
             .build()
 
-        val url = buildUrl(cfg.baseUrl)
+        val urls = candidateUrls(cfg.baseUrl)
         val body = buildBody(cfg.model, source, mode)
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Content-Type", "application/json")
-            .addHeader("Authorization", "Bearer ${cfg.apiKey}")
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val call = client.newCall(request)
+        var currentCall: okhttp3.Call? = null
 
         val flow = callbackFlow<Event> {
             val job = launch(Dispatchers.IO) {
-                try {
-                    val response = call.execute()
-                    if (!response.isSuccessful) {
-                        val msg = "HTTP ${response.code}: ${response.message}" +
-                                (response.body?.string()?.let { "\n$it" } ?: "")
-                        trySend(Event.Error(msg))
-                        return@launch
-                    }
-                    val bodyResp = response.body ?: run {
-                        trySend(Event.Error("空响应体"))
-                        return@launch
-                    }
-                    val sourceBuf: BufferedSource = bodyResp.source()
-                    while (!sourceBuf.exhausted()) {
-                        val line = sourceBuf.readUtf8Line() ?: break
-                        val trimmed = line.trim()
-                        if (trimmed.isEmpty()) continue
-                        if (trimmed.startsWith("data:")) {
-                            val data = trimmed.removePrefix("data:").trim()
-                            if (data == "[DONE]") {
-                                trySend(Event.Completed)
-                                break
-                            }
-                            try {
-                                val json = JSONObject(data)
-                                val choices = json.optJSONArray("choices")
-                                if (choices != null && choices.length() > 0) {
-                                    val c0 = choices.getJSONObject(0)
-                                    val delta = c0.optJSONObject("delta")
-                                    val message = c0.optJSONObject("message")
-                                    val content = when {
-                                        delta != null -> delta.optString("content")
-                                        message != null -> message.optString("content")
-                                        else -> c0.optString("content")
-                                    }
-                                    if (!content.isNullOrBlank()) {
-                                        trySend(Event.Chunk(content))
+                var success = false
+                var lastError: String? = null
+                for (u in urls) {
+                    if (success) break
+                    try {
+                        val request = Request.Builder()
+                            .url(u)
+                            .addHeader("Content-Type", "application/json")
+                            .addHeader("Authorization", "Bearer ${cfg.apiKey}")
+                            .post(body.toRequestBody("application/json".toMediaType()))
+                            .build()
+                        val call = client.newCall(request)
+                        currentCall = call
+                        val response = call.execute()
+                        if (response.isSuccessful) {
+                            val bodyResp = response.body
+                            if (bodyResp == null) {
+                                lastError = "空响应体"
+                            } else {
+                                val sourceBuf: BufferedSource = bodyResp.source()
+                                while (!sourceBuf.exhausted()) {
+                                    val line = try { sourceBuf.readUtf8Line() } catch (_: Exception) { null }
+                                    if (line == null) break
+                                    val trimmed = line.trim()
+                                    if (trimmed.isEmpty()) continue
+                                    if (trimmed.startsWith("data:")) {
+                                        val data = trimmed.removePrefix("data:").trim()
+                                        if (data == "[DONE]") {
+                                            trySend(Event.Completed)
+                                            success = true
+                                            break
+                                        }
+                                        try {
+                                            val json = JSONObject(data)
+                                            val choices = json.optJSONArray("choices")
+                                            if (choices != null && choices.length() > 0) {
+                                                val c0 = choices.getJSONObject(0)
+                                                val delta = c0.optJSONObject("delta")
+                                                val message = c0.optJSONObject("message")
+                                                val content = when {
+                                                    delta != null -> delta.optString("content")
+                                                    message != null -> message.optString("content")
+                                                    else -> c0.optString("content")
+                                                }
+                                                if (!content.isNullOrBlank()) {
+                                                    trySend(Event.Chunk(content))
+                                                }
+                                            }
+                                        } catch (e: Exception) {
+                                            lastError = "解析流事件失败：${e.message}"
+                                        }
                                     }
                                 }
-                            } catch (e: Exception) {
-                                trySend(Event.Error("解析流事件失败：${e.message}"))
                             }
+                        } else {
+                            lastError = "HTTP ${response.code}: ${response.message}" +
+                                    (response.body?.string()?.let { "\n$it" } ?: "")
                         }
+                    } catch (e: Exception) {
+                        lastError = "网络异常：${e.message}"
+                        // 尝试下一个候选 URL
                     }
-                } catch (e: Exception) {
-                    trySend(Event.Error("网络异常：${e.message}"))
+                }
+                if (!success) {
+                    trySend(Event.Error(lastError ?: "请求失败"))
                 }
             }
 
             awaitClose {
                 try {
-                    call.cancel()
+                    currentCall?.cancel()
                 } catch (_: Exception) { }
                 job.cancel()
             }
         }
 
-        return flow to Handle { try { call.cancel() } catch (_: Exception) { } }
+        return flow to Handle { try { currentCall?.cancel() } catch (_: Exception) { } }
     }
 }

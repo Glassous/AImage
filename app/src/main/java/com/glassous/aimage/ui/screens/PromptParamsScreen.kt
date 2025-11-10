@@ -36,6 +36,7 @@ fun PromptParamsScreen(
     var editOriginalName by remember { mutableStateOf<String?>(null) }
     var editName by remember { mutableStateOf("") }
     var editSuggestionsText by remember { mutableStateOf("") }
+    var deleteConfirmName by remember { mutableStateOf<String?>(null) }
 
     // 加载参数定义（首次为空则写入内置预设），并初始化预设收藏
     LaunchedEffect(Unit) {
@@ -201,9 +202,7 @@ fun PromptParamsScreen(
                             showEditDialog = true
                         },
                         onDelete = {
-                            PromptParamsStorage.deleteParamDef(context, def.name)
-                            paramDefs = PromptParamsStorage.loadParamDefs(context).map { ParamDef(it.name, it.suggestions) }
-                            favorites = PromptParamsStorage.loadFavorites(context)
+                            deleteConfirmName = def.name
                         }
                     )
                 }
@@ -252,14 +251,34 @@ fun PromptParamsScreen(
                     dismissButton = {
                         if (editOriginalName != null) {
                             TextButton(onClick = {
-                                PromptParamsStorage.deleteParamDef(context, editOriginalName!!)
-                                paramDefs = PromptParamsStorage.loadParamDefs(context).map { ParamDef(it.name, it.suggestions) }
-                                favorites = PromptParamsStorage.loadFavorites(context)
-                                showEditDialog = false
+                                deleteConfirmName = editOriginalName
                             }) { Text("删除") }
                         } else {
                             TextButton(onClick = { showEditDialog = false }) { Text("取消") }
                         }
+                    }
+                )
+            }
+
+            // 删除确认弹窗
+            deleteConfirmName?.let { toDelete ->
+                AlertDialog(
+                    onDismissRequest = { deleteConfirmName = null },
+                    title = { Text("确认删除") },
+                    text = { Text("确定删除预设“$toDelete”？此操作不可恢复。") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            PromptParamsStorage.deleteParamDef(context, toDelete)
+                            paramDefs = PromptParamsStorage.loadParamDefs(context).map { ParamDef(it.name, it.suggestions) }
+                            favorites = PromptParamsStorage.loadFavorites(context)
+                            deleteConfirmName = null
+                            if (showEditDialog && editOriginalName == toDelete) {
+                                showEditDialog = false
+                            }
+                        }) { Text("删除") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { deleteConfirmName = null }) { Text("取消") }
                     }
                 )
             }
