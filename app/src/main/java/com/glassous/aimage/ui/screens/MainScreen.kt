@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
@@ -106,6 +107,8 @@ fun MainScreen(
     var showNewChatDialog by remember { mutableStateOf(false) }
     var selectedAspectRatio by remember { mutableStateOf(AspectRatio.SQUARE) }
     var showAspectRatioMenu by remember { mutableStateOf(false) }
+    var showOptionsSheet by remember { mutableStateOf(false) }
+    val optionsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     
     var showSheet by remember { mutableStateOf(false) }
     // 右侧快捷栏显隐（提升到页面级，供顶部栏按钮调用）
@@ -123,7 +126,11 @@ fun MainScreen(
     var translateHandle by remember { mutableStateOf<PolishAIClient.Handle?>(null) }
     var translateCfg by remember { mutableStateOf(PromptAIConfigStorage.load(context)) }
     ThemeStorage.ensureInitialized(context)
-    val showTranslateFab by ThemeStorage.showTranslateFabFlow.collectAsState(initial = ThemeStorage.loadShowTranslateFab(context))
+    // 启动时读取用户上次选择的图片比例
+    LaunchedEffect(Unit) {
+        val saved = ThemeStorage.loadDefaultAspectRatio(context)
+        selectedAspectRatio = try { AspectRatio.valueOf(saved) } catch (_: Exception) { AspectRatio.SQUARE }
+    }
 
     fun startTranslateStreaming(source: String) {
         val cfg = translateCfg
@@ -311,7 +318,7 @@ fun MainScreen(
             showModelRequiredDialog = false
             // 其他 UI 辅助状态复位
             selectedAspectRatio = AspectRatio.SQUARE
-            showAspectRatioMenu = false
+            showOptionsSheet = false
             showSheet = false
         }
     }
@@ -479,27 +486,23 @@ fun MainScreen(
                                 unfocusedBorderColor = MaterialTheme.colorScheme.outline
                             ),
                             leadingIcon = {
-                                // 图片比例选择按钮（内嵌在输入框内）
+                                // 选择按钮图标（1:1，略低于输入框高度，圆角与输入框一致）
                                 Surface(
-                                    onClick = { showAspectRatioMenu = !showAspectRatioMenu },
+                                    onClick = { showOptionsSheet = true },
                                     modifier = Modifier
                                         .padding(start = 4.dp)
-                                        .wrapContentSize(),
-                                    shape = RoundedCornerShape(16.dp),
+                                        .size(40.dp),
+                                    shape = RoundedCornerShape(24.dp),
                                     color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
                                     contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                                 ) {
-                                    Text(
-                                        text = when (selectedAspectRatio) {
-                                            AspectRatio.SQUARE -> "1:1"
-                                            AspectRatio.PORTRAIT_3_4 -> "3:4"
-                                            AspectRatio.LANDSCAPE_4_3 -> "4:3"
-                                            AspectRatio.PORTRAIT_9_16 -> "9:16"
-                                        },
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
+                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Tune,
+                                            contentDescription = "选择",
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
                                 }
                             },
                         trailingIcon = {
@@ -895,40 +898,7 @@ fun MainScreen(
                 }
             }
 
-            // 页面左下角的悬浮英译按钮（不与输入框同容器，背后透明），受设置页开关控制 + 输入为空隐藏
-            val showTranslateButton = showTranslateFab == true && getCurrentWindow()?.inputText?.isNotBlank() == true
-            if (showTranslateButton) {
-                SmallFloatingActionButton(
-                    onClick = {
-                        val source = getCurrentWindow()?.inputText?.trim().orEmpty()
-                        if (source.isBlank()) {
-                            Toast.makeText(context, "请输入内容后再翻译", Toast.LENGTH_SHORT).show()
-                        } else {
-                            showTranslateDialog = true
-                            startTranslateStreaming(source)
-                        }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(16.dp),
-                    elevation = FloatingActionButtonDefaults.elevation(
-                        defaultElevation = 0.dp,
-                        pressedElevation = 0.dp,
-                        focusedElevation = 0.dp,
-                        hoveredElevation = 0.dp
-                    )
-                ) {
-                    if (translateStreaming) {
-                        LoadingIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            polygons = LoadingIndicatorDefaults.IndeterminateIndicatorPolygons
-                        )
-                    } else {
-                        Icon(imageVector = Icons.Filled.Language, contentDescription = "一键英译")
-                    }
-                }
-            }
+            // 翻译功能迁移至底部选项面板，移除悬浮按钮
         }
     }
 
@@ -1162,51 +1132,69 @@ fun MainScreen(
         )
     }
     
-    // 图片比例选择菜单
-    if (showAspectRatioMenu) {
-        AlertDialog(
-            onDismissRequest = { showAspectRatioMenu = false },
-            title = { Text("选择图片比例") },
-            text = {
-                Column {
-                    AspectRatio.values().forEach { ratio ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    selectedAspectRatio = ratio
-                                    showAspectRatioMenu = false
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = selectedAspectRatio == ratio,
-                                onClick = {
-                                    selectedAspectRatio = ratio
-                                    showAspectRatioMenu = false
-                                }
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = when (ratio) {
-                                    AspectRatio.SQUARE -> "1:1 (正方形)"
-                                    AspectRatio.PORTRAIT_3_4 -> "3:4 (竖屏)"
-                                    AspectRatio.LANDSCAPE_4_3 -> "4:3 (横屏)"
-                                    AspectRatio.PORTRAIT_9_16 -> "9:16 (手机竖屏)"
-                                },
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
+    // 选项面板：比例选择 + 翻译入口
+    if (showOptionsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showOptionsSheet = false },
+            sheetState = optionsSheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("图片比例", style = MaterialTheme.typography.titleSmall)
+                AspectRatio.values().forEach { ratio ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedAspectRatio = ratio
+                                ThemeStorage.saveDefaultAspectRatio(context, ratio.name)
+                                showOptionsSheet = false
+                            }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedAspectRatio == ratio,
+                            onClick = {
+                                selectedAspectRatio = ratio
+                                ThemeStorage.saveDefaultAspectRatio(context, ratio.name)
+                                showOptionsSheet = false
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(ratio.displayName, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { showAspectRatioMenu = false }) {
-                    Text("确定")
+
+                Divider()
+
+                Text("翻译", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val source = getCurrentWindow()?.inputText?.trim().orEmpty()
+                            if (source.isBlank()) {
+                                Toast.makeText(context, "请输入内容后再翻译", Toast.LENGTH_SHORT).show()
+                            } else {
+                                showTranslateDialog = true
+                                startTranslateStreaming(source)
+                                showOptionsSheet = false
+                            }
+                        }
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(imageVector = Icons.Filled.Language, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("翻译为英文", style = MaterialTheme.typography.bodyMedium)
                 }
             }
-        )
+        }
     }
     
     // 添加上下滑动手势处理
@@ -1263,21 +1251,11 @@ fun ChatWindowContent(
                             }
                         )
 
-                        // 模型与时间信息
-                        val modelText = window.modelRef?.let { ref ->
-                            "模型：${ref.group.displayName} / ${ref.modelName}"
-                        } ?: "模型：未选择"
-                        val timeText = window.lastGeneratedTimestamp?.let { "时间：$it" } ?: ""
+                        // 图片时间信息（仅显示纯时间戳）
+                        val timeText = window.lastGeneratedTimestamp?.let { it } ?: ""
                         if (timeText.isNotEmpty()) {
                             Text(
-                                text = "$modelText  |  $timeText",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
-                        } else {
-                            Text(
-                                text = modelText,
+                                text = timeText,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 8.dp)
