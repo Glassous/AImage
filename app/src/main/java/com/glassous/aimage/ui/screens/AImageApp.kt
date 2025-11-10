@@ -118,6 +118,9 @@ fun AImageApp(
                     // 进入设置页时不关闭侧边栏，确保动画连贯
                     context.startActivity(Intent(context, SettingsActivity::class.java))
                 },
+                onPromptAssistant = {
+                    context.startActivity(Intent(context, com.glassous.aimage.PromptAssistantActivity::class.java))
+                },
                 onHistoryItemClick = { historyItem ->
                     scope.launch {
                         drawerState.close()

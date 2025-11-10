@@ -330,12 +330,33 @@ fun MainScreen(
                             val m = ref?.let { groupModels[it.group]?.find { um -> um.name == it.modelName } }
                             m?.displayName?.takeIf { it.isNotBlank() } ?: m?.name ?: "未选择模型"
                         }
-                        TextButton(onClick = { if (getCurrentWindow() != null) showSheet = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
-                            Text(
-                                text = titleText,
-                                style = MaterialTheme.typography.titleLarge,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
+                        TextButton(
+                            onClick = { if (getCurrentWindow() != null) showSheet = true },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                val logo = currentWindow?.modelRef?.group?.logoRes()
+                                if (logo != null) {
+                                    Image(
+                                        painter = painterResource(id = logo),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Text(
+                                    text = titleText,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                         if (currentWindow != null) {
                             Box(
@@ -393,19 +414,7 @@ fun MainScreen(
                         ) {
                             Icon(imageVector = Icons.Default.Add, contentDescription = "新建聊天窗口")
                         }
-                        // 提示词助写入口按钮
-                        val context = LocalContext.current
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    context.startActivity(android.content.Intent(context, com.glassous.aimage.PromptAssistantActivity::class.java))
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(imageVector = Icons.Default.Edit, contentDescription = "提示词助写")
-                        }
+                        // 提示词助写入口按钮已移动到侧边栏标题行右侧
                         // 呼出/关闭右侧快捷栏按钮（靠右，位于 + 号右侧）
                         Box(
                             modifier = Modifier
@@ -1220,56 +1229,7 @@ fun ChatWindowContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(bottom = 16.dp)
     ) {
-        item {
-            // 模型选择卡片
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onModelClick
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val logo = window.modelRef?.group?.logoRes()
-                    if (logo != null) {
-                        Image(
-                            painter = painterResource(id = logo),
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Menu,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "当前模型",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = window.modelRef?.let { ref ->
-                                "${ref.group.displayName} / ${ref.modelName}"
-                            } ?: "未选择模型",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    IconButton(onClick = onCloseClick) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "关闭窗口"
-                        )
-                    }
-                }
-            }
-        }
+        // 已移除旧的模型切换与展示卡片（改为顶部栏模型选择）
         
         // 显示生成的图片（移动到文字回复之前）
         window.imageUrl?.let { url ->

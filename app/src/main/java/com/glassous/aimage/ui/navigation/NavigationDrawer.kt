@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -32,6 +34,7 @@ data class DrawerItem(
 fun AppNavigationDrawer(
     onNewConversation: () -> Unit,
     onSettings: () -> Unit,
+    onPromptAssistant: () -> Unit,
     onHistoryItemClick: (HistoryItem) -> Unit,
     onDeleteHistoryItem: (HistoryItem) -> Unit,
     activeHistoryIds: List<String>,
@@ -48,16 +51,26 @@ fun AppNavigationDrawer(
         Column(modifier = Modifier.fillMaxHeight()) {
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 顶部：标题“AImage”居左显示
-            Text(
-                text = "AImage",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+            // 顶部：标题“AImage”居左显示，提示词助写按钮居右
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                textAlign = TextAlign.Start
-            )
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "AImage",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                IconButton(onClick = onPromptAssistant) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "提示词助写"
+                    )
+                }
+            }
 
             // 顶部：新建对话
             NavigationDrawerItem(
@@ -88,7 +101,7 @@ fun AppNavigationDrawer(
                 )
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // 中部：历史记录列表（直接展示，无预设数据）
             LazyColumn(
