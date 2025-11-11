@@ -504,55 +504,51 @@ fun MainScreen(
                                         )
                                     }
                                 }
-                            },
-                        trailingIcon = {
-                            if (chatWindows.size >= 2) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                            }
+                        )
+
+                        // 多窗口切换快捷键，移出输入框以避免遮挡文本右侧区域
+                        if (chatWindows.size >= 2) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                // 上一窗口（向上）
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable(enabled = pagerState.currentPage > 0) {
+                                            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                                        },
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    // 上一窗口（向上）
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .clickable(enabled = pagerState.currentPage > 0) {
-                                                scope.launch {
-                                                    pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                                                }
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.KeyboardArrowUp,
-                                            contentDescription = "上一窗口",
-                                            tint = if (pagerState.currentPage > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                    // 下一窗口（向下）
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .clickable(enabled = pagerState.currentPage < chatWindows.size - 1) {
-                                                scope.launch {
-                                                    pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                                }
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.KeyboardArrowDown,
-                                            contentDescription = "下一窗口",
-                                            tint = if (pagerState.currentPage < chatWindows.size - 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
+                                    Icon(
+                                        imageVector = Icons.Filled.KeyboardArrowUp,
+                                        contentDescription = "上一窗口",
+                                        tint = if (pagerState.currentPage > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                // 下一窗口（向下）
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable(enabled = pagerState.currentPage < chatWindows.size - 1) {
+                                            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.KeyboardArrowDown,
+                                        contentDescription = "下一窗口",
+                                        tint = if (pagerState.currentPage < chatWindows.size - 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
                         }
-                    )
                     // 当图片正在生成时，隐藏发送按钮；仅在当前窗口非加载且输入不为空时显示
                     val showSendButton = (getCurrentWindow()?.isLoading != true) && (getCurrentWindow()?.inputText?.isNotBlank() == true)
                     AnimatedVisibility(
