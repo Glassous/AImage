@@ -2,9 +2,11 @@ package com.glassous.aimage.ui.screens
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
@@ -30,6 +32,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -71,10 +76,18 @@ fun ImagePreviewScreen(
                                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                             } else null
                         }
-                        url.startsWith("content://") || url.startsWith("file://") -> {
+                        url.startsWith("content://") -> {
                             context.contentResolver.openInputStream(Uri.parse(url))?.use { input ->
                                 BitmapFactory.decodeStream(input)
                             }
+                        }
+                        url.startsWith("file://") -> {
+                            val path = Uri.parse(url).path
+                            if (path != null) BitmapFactory.decodeFile(path) else null
+                        }
+                        java.io.File(url).exists() -> {
+                            // 兼容纯文件路径（无 scheme），例如 /data/user/0/.../files/xxx.png
+                            BitmapFactory.decodeFile(url)
                         }
                         else -> {
                             java.net.URL(url).openStream().use { input ->
@@ -89,15 +102,25 @@ fun ImagePreviewScreen(
                         put(MediaStore.Images.Media.DISPLAY_NAME, filename)
                         put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
                         put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/AImage")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Images.Media.IS_PENDING, 1)
+                        }
                     }
                     val resolver = context.contentResolver
                     val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
                     if (uri == null) return@withContext false
-                    resolver.openOutputStream(uri)?.use { out ->
+                    val writeOk = resolver.openOutputStream(uri)?.use { out ->
                         val ok = bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                         out.flush()
                         ok
                     } ?: false
+                    if (writeOk && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val after = ContentValues().apply {
+                            put(MediaStore.Images.Media.IS_PENDING, 0)
+                        }
+                        resolver.update(uri, after, null, null)
+                    }
+                    writeOk
                 } catch (se: SecurityException) {
                     false
                 } catch (_: Exception) {
@@ -133,7 +156,29 @@ fun ImagePreviewScreen(
                             contentDescription = "旋转图片"
                         )
                     }
-                    IconButton(onClick = { saveImageToAlbum(context, imageUrl) }) {
+                    val writePermissionLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestPermission()
+                    ) { granted ->
+                        if (granted) {
+                            saveImageToAlbum(context, imageUrl)
+                        } else {
+                            Toast.makeText(context, "未授予存储权限，无法保存", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    IconButton(onClick = {
+                        val needLegacyWritePerm = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
+                        if (needLegacyWritePerm) {
+                            val granted = ContextCompat.checkSelfPermission(
+                                context,
+                                android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (!granted) {
+                                writePermissionLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                return@IconButton
+                            }
+                        }
+                        saveImageToAlbum(context, imageUrl)
+                    }) {
                         Icon(
                             imageVector = Icons.Default.Save,
                             contentDescription = "保存到本地"
