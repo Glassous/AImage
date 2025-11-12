@@ -20,6 +20,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.launch
@@ -184,6 +186,9 @@ fun SettingsScreen(
             // 云端同步模块（OSS）
             item {
                 CloudSyncSettingCard()
+            }
+            item {
+                VersionInfoCard()
             }
         }
     }
@@ -689,5 +694,133 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
                 TextButton(onClick = { showResult = false }) { Text("好的") }
             }
         )
+    }
+}
+
+@Composable
+private fun VersionInfoCard(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var latestTag by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    var fetchError by remember { mutableStateOf<String?>(null) }
+    var latestApkUrl by remember { mutableStateOf<String?>(null) }
+    var refreshToken by remember { mutableStateOf(0) }
+
+    LaunchedEffect(refreshToken) {
+        try {
+            val client = OkHttpClient()
+            val request = Request.Builder()
+                .url("https://api.github.com/repos/Glassous/AImage/releases/latest")
+                .addHeader("Accept", "application/vnd.github+json")
+                .addHeader("X-GitHub-Api-Version", "2022-11-28")
+                .addHeader("User-Agent", "AImage-Android")
+                .build()
+            val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                client.newCall(request).execute()
+            }
+            if (response.isSuccessful) {
+                val body = response.body?.string()
+                if (!body.isNullOrBlank()) {
+                    val json = org.json.JSONObject(body)
+                    val tag = json.optString("tag_name").ifBlank { json.optString("name") }
+                    latestTag = tag.takeIf { it.isNotBlank() }
+                    latestApkUrl = null
+                    val assets = json.optJSONArray("assets")
+                    if (assets != null) {
+                        for (i in 0 until assets.length()) {
+                            val a = assets.optJSONObject(i)
+                            val name = a?.optString("name") ?: ""
+                            val url = a?.optString("browser_download_url") ?: ""
+                            if (name.endsWith(".apk") && url.isNotBlank()) {
+                                latestApkUrl = url
+                                break
+                            }
+                        }
+                    }
+                } else {
+                    fetchError = "空响应"
+                }
+            } else {
+                fetchError = "HTTP ${response.code}"
+            }
+        } catch (e: Exception) {
+            fetchError = e.message
+        } finally {
+            loading = false
+        }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "AImage",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
+
+            val currentVersion = try {
+                val pm = context.packageManager
+                val flags = android.content.pm.PackageManager.PackageInfoFlags.of(0)
+                val pkg = pm.getPackageInfo(context.packageName, flags)
+                pkg.versionName ?: ""
+            } catch (_: Exception) { "" }
+            Text(
+                text = "当前版本：${currentVersion.ifBlank { "未知" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+            )
+
+            val remoteText = when {
+                loading -> "GitHub 最新版本：加载中…"
+                fetchError != null -> "GitHub 最新版本：获取失败"
+                latestTag != null -> "GitHub 最新版本：${latestTag}"
+                else -> "GitHub 最新版本：无数据"
+            }
+            Text(
+                text = remoteText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = {
+                    fetchError = null
+                    loading = true
+                    refreshToken++
+                }) {
+                    Text("检测更新")
+                }
+                FilledTonalButton(onClick = {
+                    val url = latestApkUrl ?: ""
+                    if (url.isNotBlank()) {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                        context.startActivity(intent)
+                    }
+                }, enabled = latestApkUrl != null) {
+                    Text("直接下载最新安装包")
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = {
+                    val url = "https://github.com/Glassous/AImage/releases/latest"
+                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                    context.startActivity(intent)
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Text("在GitHub查看")
+                }
+            }
+        }
     }
 }

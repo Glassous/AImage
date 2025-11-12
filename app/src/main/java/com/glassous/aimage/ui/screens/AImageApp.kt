@@ -2,10 +2,13 @@ package com.glassous.aimage.ui.screens
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import android.content.Intent
 import com.glassous.aimage.ui.navigation.AppNavigationDrawer
 import com.glassous.aimage.SettingsActivity
@@ -17,6 +20,8 @@ import com.glassous.aimage.oss.OssConfigStorage
 import com.glassous.aimage.oss.AutoSyncNotifier
 import com.glassous.aimage.oss.AutoSyncEvent
 import com.glassous.aimage.oss.AutoSyncType
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,6 +94,74 @@ fun AImageApp(
     LaunchedEffect(historyFromFlow) {
         historyItems.clear()
         historyItems.addAll(historyFromFlow)
+    }
+
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var latestTag by remember { mutableStateOf<String?>(null) }
+    var latestBody by remember { mutableStateOf("") }
+    var latestApkUrl by remember { mutableStateOf<String?>(null) }
+    var currentVersionName by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        try {
+            val pm = context.packageManager
+            val flags = android.content.pm.PackageManager.PackageInfoFlags.of(0)
+            val pkg = pm.getPackageInfo(context.packageName, flags)
+            currentVersionName = pkg.versionName ?: ""
+        } catch (_: Exception) { currentVersionName = "" }
+        try {
+            val client = OkHttpClient()
+            val request = Request.Builder()
+                .url("https://api.github.com/repos/Glassous/AImage/releases/latest")
+                .addHeader("Accept", "application/vnd.github+json")
+                .addHeader("X-GitHub-Api-Version", "2022-11-28")
+                .addHeader("User-Agent", "AImage-Android")
+                .build()
+            val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                client.newCall(request).execute()
+            }
+            if (response.isSuccessful) {
+                val bodyStr = response.body?.string()
+                if (!bodyStr.isNullOrBlank()) {
+                    val json = org.json.JSONObject(bodyStr)
+                    val tag = json.optString("tag_name").ifBlank { json.optString("name") }
+                    latestTag = tag.takeIf { it.isNotBlank() }
+                    latestBody = json.optString("body")
+                    latestApkUrl = null
+                    val assets = json.optJSONArray("assets")
+                    if (assets != null) {
+                        for (i in 0 until assets.length()) {
+                            val a = assets.optJSONObject(i)
+                            val name = a?.optString("name") ?: ""
+                            val url = a?.optString("browser_download_url") ?: ""
+                            if (name.endsWith(".apk") && url.isNotBlank()) {
+                                latestApkUrl = url
+                                break
+                            }
+                        }
+                    }
+                    val latest = latestTag ?: ""
+                    fun parseVersion(s: String): List<Int> {
+                        val t = s.trim().removePrefix("v").removePrefix("V")
+                        return t.split('.', '-', '_').mapNotNull { it.toIntOrNull() }
+                    }
+                    fun isNewer(a: String, b: String): Boolean {
+                        val va = parseVersion(a)
+                        val vb = parseVersion(b)
+                        val n = kotlin.math.max(va.size, vb.size)
+                        for (i in 0 until n) {
+                            val ai = va.getOrElse(i) { 0 }
+                            val bi = vb.getOrElse(i) { 0 }
+                            if (ai != bi) return ai > bi
+                        }
+                        return false
+                    }
+                    if (latest.isNotBlank() && currentVersionName.isNotBlank() && isNewer(latest, currentVersionName)) {
+                        showUpdateDialog = true
+                    }
+                }
+            }
+        } catch (_: Exception) { }
     }
 
     // 处理返回键逻辑
@@ -189,5 +262,33 @@ fun AImageApp(
                 newConversationToken = newConversationToken,
                 modifier = Modifier.fillMaxSize()
             )
+        if (showUpdateDialog) {
+            AlertDialog(
+                onDismissRequest = { showUpdateDialog = false },
+                title = { Text("发现新版本") },
+                text = {
+                    Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                        val latest = latestTag ?: ""
+                        Text("当前版本：${currentVersionName.ifBlank { "未知" }}", style = MaterialTheme.typography.bodyMedium)
+                        Text("最新版本：${latest.ifBlank { "未知" }}", style = MaterialTheme.typography.bodyMedium)
+                        if (latestBody.isNotBlank()) {
+                            Text("更新内容：", style = MaterialTheme.typography.bodyMedium)
+                            Text(latestBody, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val url = latestApkUrl ?: "https://github.com/Glassous/AImage/releases/latest"
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                        context.startActivity(intent)
+                        showUpdateDialog = false
+                    }) { Text("下载更新") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showUpdateDialog = false }) { Text("稍后再说") }
+                }
+            )
+        }
     }
 }
