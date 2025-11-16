@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -58,6 +59,10 @@ import java.util.UUID
 import androidx.compose.animation.*
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.animation.core.tween
 import android.widget.Toast
 
@@ -68,6 +73,7 @@ data class ChatWindow(
     var inputText: String = "",
     var responseText: String = "",
     var imageUrl: String? = null,
+    var uploadedImages: List<String> = emptyList(),
     var isLoading: Boolean = false,
     var lastGeneratedTimestamp: String? = null
 )
@@ -447,10 +453,57 @@ fun MainScreen(
             if (chatWindows.isNotEmpty()) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 8.dp
+                color = Color.Transparent,
+                shadowElevation = 0.dp
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth().background(Color.Transparent)) {
+                    val previewImages = getCurrentWindow()?.uploadedImages.orEmpty()
+                    if (previewImages.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, end = 16.dp, top = 12.dp)
+                                .background(Color.Transparent)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            previewImages.forEachIndexed { idx, img ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(120.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable { onImageClick(img) }
+                                ) {
+                                    AsyncImage(
+                                        model = img,
+                                        contentDescription = "参考图",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(4.dp)
+                                            .size(24.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(Color.Transparent)
+                                            .clickable {
+                                                updateCurrentWindow { w ->
+                                                    w.copy(uploadedImages = w.uploadedImages.filterIndexed { i, _ -> i != idx })
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "移除参考图",
+                                            tint = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                     val navBarInset = androidx.compose.foundation.layout.WindowInsets.navigationBars
                         .asPaddingValues()
                         .calculateBottomPadding()
@@ -483,7 +536,11 @@ fun MainScreen(
                             shape = RoundedCornerShape(24.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                disabledContainerColor = Color.Transparent,
+                                errorContainerColor = Color.Transparent
                             ),
                             leadingIcon = {
                                 // 选择按钮图标（1:1，略低于输入框高度，圆角与输入框一致）
@@ -616,6 +673,7 @@ fun MainScreen(
                                             modelName = targetModelRef.modelName,
                                             prompt = broadcastInput,
                                             aspectRatio = selectedAspectRatio.displayName,
+                                            inputImages = w.uploadedImages,
                                             context = context
                                         )
 
@@ -702,10 +760,18 @@ fun MainScreen(
         }
     ) { paddingValues ->
         // 将内容区域包裹在窗口级 Box 中，方便在其上层叠右侧固定快捷栏
+        val layoutDirection = LocalLayoutDirection.current
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(
+                    PaddingValues(
+                        start = paddingValues.calculateStartPadding(layoutDirection),
+                        top = paddingValues.calculateTopPadding(),
+                        end = paddingValues.calculateEndPadding(layoutDirection),
+                        bottom = 0.dp
+                    )
+                )
         ) {
             if (chatWindows.isEmpty()) {
                 // 空状态 - 显示欢迎界面
@@ -1189,6 +1255,29 @@ fun MainScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("翻译为英文", style = MaterialTheme.typography.bodyMedium)
                 }
+
+                Divider()
+
+                Text("上传图片", style = MaterialTheme.typography.titleSmall)
+                val imagePickerMulti = rememberLauncherForActivityResult(
+                    contract = androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()
+                ) { uris ->
+                    if (!uris.isNullOrEmpty()) {
+                        updateCurrentWindow { w -> w.copy(uploadedImages = (w.uploadedImages + uris.map { it.toString() }).distinct()) }
+                        showOptionsSheet = false
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { imagePickerMulti.launch("image/*") }
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(imageVector = Icons.Filled.Image, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("从相册选择多张图片", style = MaterialTheme.typography.bodyMedium)
+                }
             }
         }
     }
@@ -1225,9 +1314,7 @@ fun ChatWindowContent(
                     Column(
                         modifier = Modifier.padding(16.dp)
                     ) {
-                        // 根据图片实际比例动态调整显示比例
                         var imageAspect by remember(url) { mutableStateOf<Float?>(null) }
-                        
                         AsyncImage(
                             model = url,
                             contentDescription = "生成的图片",
@@ -1247,7 +1334,6 @@ fun ChatWindowContent(
                             }
                         )
 
-                        // 图片时间信息（仅显示纯时间戳）
                         val timeText = window.lastGeneratedTimestamp?.let { it } ?: ""
                         if (timeText.isNotEmpty()) {
                             Text(
@@ -1257,8 +1343,6 @@ fun ChatWindowContent(
                                 modifier = Modifier.padding(top = 8.dp)
                             )
                         }
-                        
-                        // 按需求移除图片框中的“生成说明”文本
                     }
                 }
             }

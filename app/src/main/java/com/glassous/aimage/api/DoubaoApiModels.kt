@@ -6,6 +6,7 @@ data class DoubaoImageRequest(
     val model: String,
     val prompt: String,
     val size: String,
+    val image: String? = null,
     @SerializedName("response_format") val responseFormat: String = "url",
     val watermark: Boolean = false
 )

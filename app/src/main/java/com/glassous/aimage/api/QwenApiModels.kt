@@ -71,7 +71,8 @@ data class QwenImageGenMessage(
 )
 
 data class QwenImageGenContent(
-    val text: String? = null
+    val text: String? = null,
+    val image: String? = null
 )
 
 data class QwenImageGenParameters(

@@ -6,6 +6,8 @@ data class MiniMaxT2IRequest(
     val aspect_ratio: String? = null,
     val width: Int? = null,
     val height: Int? = null,
+    val image_url: String? = null,
+    val image_base64: String? = null,
     val response_format: String = "url",
     val seed: Int? = null,
     val n: Int = 1,

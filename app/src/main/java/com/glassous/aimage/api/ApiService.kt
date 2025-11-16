@@ -70,40 +70,41 @@ object ApiService {
         modelName: String,
         prompt: String,
         aspectRatio: String = "1:1",
+        inputImage: String? = null,
         context: Context? = null
     ): ApiResponse {
         return when (provider) {
             ModelGroupType.Google -> {
                 if (context != null) {
-                    generateImageWithGemini(context, modelName, prompt, aspectRatio)
+                    generateImageWithGemini(context, modelName, prompt, aspectRatio, inputImage)
                 } else {
                     generateImageMock(provider, modelName, prompt)
                 }
             }
             ModelGroupType.Doubao -> {
                 if (context != null) {
-                    generateImageWithDoubao(context, modelName, prompt, aspectRatio)
+                    generateImageWithDoubao(context, modelName, prompt, aspectRatio, inputImage)
                 } else {
                     generateImageMock(provider, modelName, prompt)
                 }
             }
             ModelGroupType.Qwen -> {
                 if (context != null) {
-                    generateImageWithQwen(context, modelName, prompt, aspectRatio)
+                    generateImageWithQwen(context, modelName, prompt, aspectRatio, inputImage)
                 } else {
                     generateImageMock(provider, modelName, prompt)
                 }
             }
             ModelGroupType.MiniMax -> {
                 if (context != null) {
-                    generateImageWithMiniMax(context, modelName, prompt, aspectRatio)
+                    generateImageWithMiniMax(context, modelName, prompt, aspectRatio, inputImage)
                 } else {
                     generateImageMock(provider, modelName, prompt)
                 }
             }
             ModelGroupType.OpenRouter -> {
                 if (context != null) {
-                    generateImageWithOpenRouter(context, modelName, prompt, aspectRatio)
+                    generateImageWithOpenRouter(context, modelName, prompt, aspectRatio, inputImage)
                 } else {
                     generateImageMock(provider, modelName, prompt)
                 }
@@ -111,12 +112,26 @@ object ApiService {
         }
     }
 
+    // 重载：支持多图输入（当前默认取第一张以保证兼容性）
+    suspend fun generateImage(
+        provider: ModelGroupType,
+        modelName: String,
+        prompt: String,
+        aspectRatio: String = "1:1",
+        inputImages: List<String>?,
+        context: Context? = null
+    ): ApiResponse {
+        val first = inputImages?.firstOrNull()
+        return generateImage(provider, modelName, prompt, aspectRatio, first, context)
+    }
+
     // -------- OpenRouter 文生图（Chat Completions 图片输出） --------
     private suspend fun generateImageWithOpenRouter(
         context: Context,
         modelName: String,
         prompt: String,
-        aspectRatio: String
+        aspectRatio: String,
+        inputImage: String?
     ): ApiResponse {
         return try {
             val cleanedPrompt = prompt.trim()
@@ -141,15 +156,18 @@ object ApiService {
                 )
             }
 
+            val normalizedImage = normalizeInputImage(context, inputImage)
+            val parts = mutableListOf<OpenRouterContentPart>()
+            parts.add(OpenRouterContentPart(type = "text", text = cleanedPrompt))
+            if (!normalizedImage.isNullOrBlank()) {
+                parts.add(OpenRouterContentPart(type = "image_url", image_url = OpenRouterImageUrl(url = normalizedImage)))
+            }
             val request = OpenRouterChatRequest(
                 model = modelName,
                 messages = listOf(
                     OpenRouterMessage(
                         role = "user",
-                        content = listOf(
-                            // OpenRouter chat/completions 支持在 content 数组中使用 type="text" 传递输入文本
-                            OpenRouterContentPart(type = "text", text = cleanedPrompt)
-                        )
+                        content = parts
                     )
                 ),
                 modalities = listOf("text", "image"),
@@ -295,7 +313,8 @@ object ApiService {
         context: Context,
         modelName: String,
         prompt: String,
-        aspectRatio: String
+        aspectRatio: String,
+        inputImage: String?
     ): ApiResponse {
         return try {
             val apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.Google)
@@ -314,11 +333,18 @@ object ApiService {
             val useGenerateContent = modelName.startsWith("gemini-")
 
             if (useGenerateContent) {
+                val normalized = normalizeInputImage(context, inputImage)
                 val gcRequest = GeminiGenerateContentRequest(
                     contents = listOf(
                         GeminiContent(
                             parts = listOf(
                                 GeminiPart(text = prompt)
+                            ) + listOfNotNull(
+                                normalized?.let { dataUrl ->
+                                    val mime = dataUrl.substringAfter("data:", "image/png").substringBefore(";")
+                                    val b64 = dataUrl.substringAfter("base64,", "")
+                                    GeminiPart(inlineData = GeminiInlineData(mimeType = mime, data = b64))
+                                }
                             ),
                             role = "user"
                         )
@@ -495,7 +521,8 @@ object ApiService {
         context: Context,
         modelName: String,
         prompt: String,
-        aspectRatio: String
+        aspectRatio: String,
+        inputImage: String?
     ): ApiResponse {
         return try {
             var apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.MiniMax).trim()
@@ -511,10 +538,13 @@ object ApiService {
                 )
             }
 
+            val normalized = normalizeInputImage(context, inputImage)
             val request = MiniMaxT2IRequest(
                 model = modelName,
                 prompt = prompt,
                 aspect_ratio = aspectRatio,
+                image_url = if (normalized?.startsWith("http") == true) normalized else null,
+                image_base64 = if (normalized?.startsWith("data:") == true) normalized.substringAfter("base64,", "") else null,
                 response_format = "base64",
                 n = 1,
                 prompt_optimizer = false,
@@ -742,7 +772,8 @@ object ApiService {
         context: Context,
         modelName: String,
         prompt: String,
-        aspectRatio: String
+        aspectRatio: String,
+        inputImage: String?
     ): ApiResponse {
         return try {
             val apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.Doubao)
@@ -756,10 +787,12 @@ object ApiService {
             }
 
             val size = mapDoubaoSize(aspectRatio)
+            val normalized = normalizeInputImage(context, inputImage)
             val request = DoubaoImageRequest(
                 model = modelName,
                 prompt = prompt,
                 size = size,
+                image = normalized,
                 responseFormat = "url",
                 watermark = false
             )
@@ -833,12 +866,13 @@ object ApiService {
         context: Context,
         modelName: String,
         prompt: String,
-        aspectRatio: String
+        aspectRatio: String,
+        inputImage: String?
     ): ApiResponse {
         return try {
             // 若选择的是通义千问图像模型（qwen-image / qwen-image-plus），直接走千问同步生成通道
             if (modelName.startsWith("qwen-image")) {
-                return generateImageWithQwenImageSync(context, modelName, prompt, aspectRatio)
+                return generateImageWithQwenImageSync(context, modelName, prompt, aspectRatio, inputImage)
             }
 
             val apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.Qwen)
@@ -870,7 +904,7 @@ object ApiService {
 
             if (!createResp.isSuccessful) {
                 // 万相创建任务失败，回退到通义千问（qwen-image-plus）
-                return tryFallbackToQianwenImage(context, prompt, aspectRatio)
+                return tryFallbackToQianwenImage(context, prompt, aspectRatio, inputImage)
             }
 
             val bodyCreate = createResp.body()
@@ -879,7 +913,7 @@ object ApiService {
                 ?: extractTaskIdFromLocation(createResp.headers()["Location"])
             if (taskId.isNullOrBlank()) {
                 // 万相返回未包含 task_id，回退到通义千问
-                return tryFallbackToQianwenImage(context, prompt, aspectRatio)
+                return tryFallbackToQianwenImage(context, prompt, aspectRatio, inputImage)
             }
 
             // 轮询查询
@@ -911,7 +945,7 @@ object ApiService {
                     break
                 } else if (status == "FAILED") {
                     // 任务失败，回退到通义千问
-                    return tryFallbackToQianwenImage(context, prompt, aspectRatio)
+                    return tryFallbackToQianwenImage(context, prompt, aspectRatio, inputImage)
                 } else {
                     // PENDING/RUNNING，继续轮询
                 }
@@ -919,7 +953,7 @@ object ApiService {
 
             if (finalUrl.isNullOrBlank() && finalBase64.isNullOrBlank()) {
                 // 未取到结果，回退到通义千问
-                return tryFallbackToQianwenImage(context, prompt, aspectRatio)
+                return tryFallbackToQianwenImage(context, prompt, aspectRatio, inputImage)
             }
 
             // 将图片立即保存到应用数据（避免24小时后失效）
@@ -942,7 +976,7 @@ object ApiService {
             )
         } catch (e: Exception) {
             // 异常时回退到通义千问
-            tryFallbackToQianwenImage(context, prompt, aspectRatio)
+            tryFallbackToQianwenImage(context, prompt, aspectRatio, inputImage)
         }
     }
 
@@ -973,7 +1007,8 @@ object ApiService {
         context: Context,
         modelName: String,
         prompt: String,
-        aspectRatio: String
+        aspectRatio: String,
+        inputImage: String?
     ): ApiResponse {
         return try {
             val apiKey = ModelConfigStorage.loadApiKey(context, ModelGroupType.Qwen)
@@ -986,13 +1021,17 @@ object ApiService {
                 )
             }
 
+            val normalized = normalizeInputImage(context, inputImage)
             val request = QwenImageGenRequest(
                 model = modelName,
                 input = QwenImageGenInput(
                     messages = listOf(
                         QwenImageGenMessage(
                             role = "user",
-                            content = listOf(QwenImageGenContent(text = prompt))
+                            content = listOfNotNull(
+                                normalized?.let { QwenImageGenContent(image = it) },
+                                QwenImageGenContent(text = prompt)
+                            )
                         )
                     )
                 ),
@@ -1072,18 +1111,49 @@ object ApiService {
         }
     }
 
+    private suspend fun normalizeInputImage(context: Context, input: String?): String? {
+        if (input.isNullOrBlank()) return null
+        return try {
+            when {
+                input.startsWith("data:") -> input
+                input.startsWith("http") -> {
+                    val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        java.net.URL(input).openStream().use { it.readBytes() }
+                    }
+                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    "data:image/png;base64,$b64"
+                }
+                input.startsWith("content://") -> {
+                    val uri = android.net.Uri.parse(input)
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    val b64 = android.util.Base64.encodeToString(bytes ?: ByteArray(0), android.util.Base64.NO_WRAP)
+                    "data:image/png;base64,$b64"
+                }
+                input.startsWith("file://") || java.io.File(input).exists() -> {
+                    val path = if (input.startsWith("file://")) input.removePrefix("file://") else input
+                    val bytes = java.io.File(path).readBytes()
+                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    "data:image/png;base64,$b64"
+                }
+                else -> input
+            }
+        } catch (_: Exception) { null }
+    }
+
     // 万相失败时，自动回退到通义千问 qwen-image-plus
     private suspend fun tryFallbackToQianwenImage(
         context: Context,
         prompt: String,
-        aspectRatio: String
+        aspectRatio: String,
+        inputImage: String? = null
     ): ApiResponse {
         // 默认使用 qwen-image-plus 作为回退模型
         return generateImageWithQwenImageSync(
             context = context,
             modelName = "qwen-image-plus",
             prompt = prompt,
-            aspectRatio = aspectRatio
+            aspectRatio = aspectRatio,
+            inputImage = inputImage
         )
     }
 
