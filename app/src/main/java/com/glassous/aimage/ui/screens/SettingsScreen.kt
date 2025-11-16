@@ -516,12 +516,16 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     var showProgress by remember { mutableStateOf(false) }
     var progressText by remember { mutableStateOf("准备中…") }
+    var progressDots by remember { mutableStateOf("") }
     var showConfirm by remember { mutableStateOf(false) }
     var showResult by remember { mutableStateOf(false) }
     var resultTitle by remember { mutableStateOf("") }
     var resultMessage by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<CloudAction?>(null) }
+    var showPreview by remember { mutableStateOf(false) }
+    var previewItems by remember { mutableStateOf(listOf<HistoryItem>()) }
+    var previewAction by remember { mutableStateOf<CloudAction?>(null) }
     // 订阅 OSS 配置流，按钮实时启用/禁用
     com.glassous.aimage.oss.OssConfigStorage.ensureInitialized(context)
     val ossCfgOrNull by com.glassous.aimage.oss.OssConfigStorage.configFlow.collectAsState(initial = com.glassous.aimage.oss.OssConfigStorage.load(context))
@@ -609,6 +613,62 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
                 }
             }
 
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        if (!configured) return@OutlinedButton
+                        showProgress = true
+                        progressText = "正在获取云端索引…"
+                        scope.launch {
+                            try {
+                                val diff = com.glassous.aimage.oss.OssSyncManager.computeIncrementalDiff(context)
+                                previewItems = diff.first
+                                previewAction = CloudAction.Upload
+                                showPreview = true
+                            } catch (_: Exception) {
+                                resultTitle = "预览失败"
+                                resultMessage = "获取云端索引失败"
+                                isError = true
+                                showResult = true
+                            } finally {
+                                showProgress = false
+                            }
+                        }
+                    },
+                    enabled = configured,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("增量上传")
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        if (!configured) return@OutlinedButton
+                        showProgress = true
+                        progressText = "正在获取云端索引…"
+                        scope.launch {
+                            try {
+                                val diff = com.glassous.aimage.oss.OssSyncManager.computeIncrementalDiff(context)
+                                previewItems = diff.second
+                                previewAction = CloudAction.Download
+                                showPreview = true
+                            } catch (_: Exception) {
+                                resultTitle = "预览失败"
+                                resultMessage = "获取云端索引失败"
+                                isError = true
+                                showResult = true
+                            } finally {
+                                showProgress = false
+                            }
+                        }
+                    },
+                    enabled = configured,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("增量下载")
+                }
+            }
+
             if (!configured) {
                 Text(
                     text = "请先完成OSS配置后再进行云端同步。",
@@ -628,7 +688,24 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(progressText)
+                    // 文案后缀动画，避免误以为卡死
+                    LaunchedEffect(showProgress) {
+                        progressDots = ""
+                        while (showProgress) {
+                            progressDots = ""
+                            kotlinx.coroutines.delay(250)
+                            if (!showProgress) break
+                            progressDots = "."
+                            kotlinx.coroutines.delay(250)
+                            if (!showProgress) break
+                            progressDots = ".."
+                            kotlinx.coroutines.delay(250)
+                            if (!showProgress) break
+                            progressDots = "..."
+                            kotlinx.coroutines.delay(250)
+                        }
+                    }
+                    Text(progressText + progressDots)
                     LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             }
@@ -681,6 +758,75 @@ private fun CloudSyncSettingCard(modifier: Modifier = Modifier) {
             },
             dismissButton = {
                 TextButton(onClick = { showConfirm = false }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showPreview) {
+        AlertDialog(
+            onDismissRequest = { showPreview = false },
+            title = { Text(if (previewAction == CloudAction.Upload) "增量上传预览" else "增量下载预览") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val countText = if (previewAction == CloudAction.Upload) "将上传 ${previewItems.size} 条" else "将下载 ${previewItems.size} 条"
+                    Text(countText)
+                    if (previewItems.isEmpty()) {
+                        Text(if (previewAction == CloudAction.Upload) "云端为空或已一致，无需上传" else "无可下载的增量项")
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(previewItems, key = { it.id }) { item ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val logo = item.provider.logoRes()
+                                    androidx.compose.foundation.Image(
+                                        painter = painterResource(id = logo),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(item.prompt, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                        Text(item.timestamp, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPreview = false
+                    if (previewAction == null || previewItems.isEmpty()) return@TextButton
+                    showProgress = true
+                    progressText = if (previewAction == CloudAction.Upload) "正在增量上传…" else "正在增量下载…"
+                    scope.launch {
+                        try {
+                            if (previewAction == CloudAction.Upload) {
+                                com.glassous.aimage.oss.OssSyncManager.uploadMissingToRemote(context)
+                                resultTitle = "上传完成"
+                                resultMessage = "已成功增量上传到云端。"
+                                isError = false
+                            } else {
+                                com.glassous.aimage.oss.OssSyncManager.downloadMissingToLocal(context)
+                                resultTitle = "下载完成"
+                                resultMessage = "已成功增量下载并更新本地。"
+                                isError = false
+                            }
+                        } catch (e: Exception) {
+                            resultTitle = if (previewAction == CloudAction.Upload) "上传失败" else "下载失败"
+                            resultMessage = e.message ?: "发生未知错误"
+                            isError = true
+                        } finally {
+                            showProgress = false
+                            showResult = true
+                        }
+                    }
+                }, enabled = previewItems.isNotEmpty()) {
+                    Text("确认")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPreview = false }) { Text("取消") }
             }
         )
     }

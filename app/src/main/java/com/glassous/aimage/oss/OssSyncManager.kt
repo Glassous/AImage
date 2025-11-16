@@ -109,6 +109,34 @@ object OssSyncManager {
         return arr.toString().toByteArray()
     }
 
+    suspend fun fetchRemoteHistoryItems(context: Context): List<com.glassous.aimage.ui.screens.HistoryItem> {
+        return withContext(Dispatchers.IO) {
+            val c = client(context) ?: return@withContext emptyList()
+            val b = bucket(context) ?: return@withContext emptyList()
+            val idTableKey = "history_ids.json"
+            val idsRemote = try {
+                val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, idTableKey)
+                val result = c.getObject(get)
+                result.objectContent.bufferedReader().use { it.readText() }
+            } catch (_: Exception) { null }
+            parseRemoteHistoryTable(idsRemote)
+        }
+    }
+
+    suspend fun computeIncrementalDiff(context: Context): Pair<List<com.glassous.aimage.ui.screens.HistoryItem>, List<com.glassous.aimage.ui.screens.HistoryItem>> {
+        return withContext(Dispatchers.IO) {
+            val remoteItems = fetchRemoteHistoryItems(context)
+            val localHistory = com.glassous.aimage.data.ChatHistoryStorage.loadAll(context)
+            val remoteIds = remoteItems.map { it.id }.toSet()
+            val localIds = localHistory.map { it.id }.toSet()
+            val toUploadIds = localIds.minus(remoteIds)
+            val toDownloadIds = remoteIds.minus(localIds)
+            val toUploadItems = localHistory.filter { toUploadIds.contains(it.id) }
+            val toDownloadItems = remoteItems.filter { toDownloadIds.contains(it.id) }
+            Pair(toUploadItems, toDownloadItems)
+        }
+    }
+
     // 合并历史记录元数据：同ID以本地为准，补充远端新增
     private fun unionHistory(local: List<com.glassous.aimage.ui.screens.HistoryItem>, remote: List<com.glassous.aimage.ui.screens.HistoryItem>): List<com.glassous.aimage.ui.screens.HistoryItem> {
         val byId = mutableMapOf<String, com.glassous.aimage.ui.screens.HistoryItem>()
@@ -394,46 +422,52 @@ object OssSyncManager {
         c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, buildHistoryTableBytes(merged)))
     }
 
-    private fun uploadMissingToRemote(context: Context) {
-        val c = client(context) ?: return
-        val b = bucket(context) ?: return
-        val idTableKey = "history_ids.json"
-        val idsRemote = try {
-            val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, idTableKey)
-            val result = c.getObject(get)
-            result.objectContent.bufferedReader().use { it.readText() }
-        } catch (e: Exception) { null }
-        val remoteItems = parseRemoteHistoryTable(idsRemote)
-        val remoteIds = remoteItems.map { it.id }.toSet()
-        val localHistory = ChatHistoryStorage.loadAll(context)
-        val localIds = localHistory.map { it.id }.toSet()
-        val toUpload = localIds.minus(remoteIds)
-        localHistory.filter { toUpload.contains(it.id) }.forEach { item ->
-            uploadHistoryItem(context, c, b, item)
+    suspend fun uploadMissingToRemote(context: Context) {
+        withContext(Dispatchers.IO) {
+            val c = client(context) ?: return@withContext
+            val b = bucket(context) ?: return@withContext
+            val idTableKey = "history_ids.json"
+            val idsRemote = try {
+                val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, idTableKey)
+                val result = c.getObject(get)
+                result.objectContent.bufferedReader().use { it.readText() }
+            } catch (_: Exception) { null }
+            val remoteItems = parseRemoteHistoryTable(idsRemote)
+            val remoteIds = remoteItems.map { it.id }.toSet()
+            val localHistory = ChatHistoryStorage.loadAll(context)
+            val localIds = localHistory.map { it.id }.toSet()
+            val toUpload = localIds.minus(remoteIds)
+            localHistory.filter { toUpload.contains(it.id) }.forEach { item ->
+                uploadHistoryItem(context, c, b, item)
+            }
+            if (toUpload.isNotEmpty()) {
+                val union = unionHistory(localHistory, remoteItems)
+                try {
+                    c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, buildHistoryTableBytes(union)))
+                } catch (_: Exception) { }
+            }
         }
-        val union = unionHistory(localHistory, remoteItems)
-        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, buildHistoryTableBytes(union)))
     }
 
-    private fun downloadMissingToLocal(context: Context) {
-        val c = client(context) ?: return
-        val b = bucket(context) ?: return
-        val idTableKey = "history_ids.json"
-        val idsRemote = try {
-            val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, idTableKey)
-            val result = c.getObject(get)
-            result.objectContent.bufferedReader().use { it.readText() }
-        } catch (e: Exception) { null }
-        val remoteItems = parseRemoteHistoryTable(idsRemote)
-        val remoteIds = remoteItems.map { it.id }.toSet()
-        val localHistory = ChatHistoryStorage.loadAll(context)
-        val localIds = localHistory.map { it.id }.toSet()
-        val toDownload = remoteIds.minus(localIds)
-        // 合并保存（不下载图片），同时刷新远端ID表
-        val merged = unionHistory(localHistory, remoteItems)
-        ChatHistoryStorage.saveAll(context, merged)
-        val union = merged // 已按union合并
-        c.putObject(com.alibaba.sdk.android.oss.model.PutObjectRequest(b, idTableKey, buildHistoryTableBytes(union)))
+    suspend fun downloadMissingToLocal(context: Context) {
+        withContext(Dispatchers.IO) {
+            val c = client(context) ?: return@withContext
+            val b = bucket(context) ?: return@withContext
+            val idTableKey = "history_ids.json"
+            val idsRemote = try {
+                val get = com.alibaba.sdk.android.oss.model.GetObjectRequest(b, idTableKey)
+                val result = c.getObject(get)
+                result.objectContent.bufferedReader().use { it.readText() }
+            } catch (_: Exception) { null }
+            val remoteItems = parseRemoteHistoryTable(idsRemote)
+            val remoteIds = remoteItems.map { it.id }.toSet()
+            val localHistory = ChatHistoryStorage.loadAll(context)
+            val localIds = localHistory.map { it.id }.toSet()
+            val toDownload = remoteIds.minus(localIds)
+            val merged = unionHistory(localHistory, remoteItems)
+            ChatHistoryStorage.saveAll(context, merged)
+            // 重要：增量下载不更新远端索引，避免不必要写入/流量
+        }
     }
 
     fun onHistoryAdded(context: Context, item: HistoryItem) {
